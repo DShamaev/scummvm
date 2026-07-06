@@ -37,6 +37,7 @@ VisualImageXMG::VisualImageXMG(Gfx::Driver *gfx) :
 		Visual(TYPE),
 		_gfx(gfx),
 		_bitmap(nullptr),
+		_depthBitmap(nullptr),
 		_surface(nullptr),
 		_originalWidth(0),
 		_originalHeight(0) {
@@ -49,6 +50,7 @@ VisualImageXMG::~VisualImageXMG() {
 	}
 	delete _surface;
 	delete _bitmap;
+	delete _depthBitmap;
 	delete _surfaceRenderer;
 }
 
@@ -100,6 +102,35 @@ bool VisualImageXMG::loadPNG(Common::SeekableReadStream *stream) {
 	return true;
 }
 
+bool VisualImageXMG::loadDepthPNG(Common::SeekableReadStream *stream, float zMin, float zMax, float bias) {
+	assert(!_depthBitmap);
+
+	Image::PNGDecoder pngDecoder;
+	if (!pngDecoder.loadStream(*stream)) {
+		return false;
+	}
+
+	if (pngDecoder.hasPalette()) {
+		warning("Indexed colors PNG depth maps are not supported");
+		return false;
+	}
+
+	Graphics::Surface *depthSurface = pngDecoder.getSurface()->convertTo(Gfx::Driver::getRGBAPixelFormat());
+
+	_depthBitmap = _gfx->createBitmap(depthSurface);
+
+	// Nearest sampling is required: interpolating the packed 16-bit
+	// R/G encoding across texels would produce garbage depth values
+	_depthBitmap->setSamplingFilter(Gfx::Bitmap::kNearest);
+
+	depthSurface->free();
+	delete depthSurface;
+
+	_surfaceRenderer->setDepthBitmap(_depthBitmap, zMin, zMax, bias);
+
+	return true;
+}
+
 Graphics::Surface *VisualImageXMG::multiplyColorWithAlpha(const Graphics::Surface *source) {
 	assert(source->format == Gfx::Driver::getRGBAPixelFormat());
 
@@ -147,6 +178,10 @@ void VisualImageXMG::render(const Common::Point &position, bool useOffset, bool 
 	} else {
 		_surfaceRenderer->render(_bitmap, drawPos, _originalWidth, _originalHeight);
 	}
+}
+
+void VisualImageXMG::renderScaledToSize(const Common::Point &position, uint width, uint height) {
+	_surfaceRenderer->render(_bitmap, position, width, height);
 }
 
 void VisualImageXMG::setFadeLevel(float fadeLevel) {

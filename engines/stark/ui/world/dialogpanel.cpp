@@ -151,7 +151,15 @@ void DialogPanel::onRender() {
 
 		// Draw subtitle if available
 		if (_subtitleVisual && StarkSettings->getBoolSetting(Settings::kSubtitle)) {
-			_subtitleVisual->render(Common::Point(_optionsLeft, _optionsTop));
+			// Bottom-anchor the subtitle within the panel: with enlarged
+			// subtitle text the block can be taller than the panel strip,
+			// so raise its top instead of letting it spill off-screen.
+			Common::Rect rect = _subtitleVisual->getRect();
+			int top = _optionsTop;
+			if (rect.height() > (int)_optionsHeight) {
+				top = _optionsTop - (rect.height() - _optionsHeight);
+			}
+			_subtitleVisual->render(Common::Point(_optionsLeft, top));
 		}
 	}
 }

@@ -23,9 +23,14 @@
 
 #include "engines/stark/model/model.h"
 #include "engines/stark/model/animhandler.h"
+#include "engines/stark/resources/location.h"
+
+#include "common/config-manager.h"
 #include "engines/stark/scene.h"
+#include "engines/stark/services/global.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/settings.h"
+#include "engines/stark/gfx/color.h"
 #include "engines/stark/gfx/opengls.h"
 #include "engines/stark/gfx/texture.h"
 
@@ -94,6 +99,34 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	setBonePositionArrayUniform(_shader, "bonePosition");
 	setLightArrayUniform(lights);
 
+	// Scene lighting tint, computed and time-smoothed by the owning
+	// ModelItem so it survives renderer recreation on animation changes
+	_shader->setUniform("ambientTint", _ambientTint);
+
+	_shader->setUniform("tex", 0);
+	_shader->setUniform("normalTex", 1);
+	_shader->setUniform("debugShowNormals", ConfMan.getBool("debug_show_normals") ? 1 : 0);
+
+	// Atmospheric fog: only where the location has a depth-mapped background
+	// (exteriors), using its depth range and horizon color
+	float fogDensity = 0.0f;
+	if (StarkSettings->getBoolSetting(Settings::kDepthFog) && StarkGlobal->getCurrent()) {
+		float zMax = StarkScene->getBackgroundDepthMax();
+		if (zMax > 0.0f) {
+			Resources::Location *location = StarkGlobal->getCurrent()->getLocation();
+			Gfx::Color fog = location->getHorizonColor();
+			_shader->setUniform("fogColor", Math::Vector3d(fog.r / 255.0f, fog.g / 255.0f, fog.b / 255.0f));
+			// Fog starts partway into the scene and reaches full at the far plane
+			_shader->setUniform1f("fogStart", StarkScene->getBackgroundDepthMin()
+					+ (zMax - StarkScene->getBackgroundDepthMin()) * 0.35f);
+			_shader->setUniform1f("fogEnd", zMax);
+			fogDensity = CLIP(ConfMan.getInt("fog_density"), 0, 100) / 100.0f;
+		}
+	}
+	_shader->setUniform1f("fogDensity", fogDensity);
+
+	bool normalMappingEnabled = StarkSettings->getBoolSetting(Settings::kNormalMapping);
+
 	Common::Array<Face *> faces = _model->getFaces();
 	Common::Array<Material *> mats = _model->getMaterials();
 
@@ -101,13 +134,23 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 		// For each face draw its vertices from the VBO, indexed by the EBO
 		const Material *material = mats[(*face)->materialId];
 		const Gfx::Texture *tex = resolveTexture(material);
+
+		glActiveTexture(GL_TEXTURE0);
 		if (tex) {
 			tex->bind();
 		} else {
 			glBindTexture(GL_TEXTURE_2D, 0);
 		}
 
+		const Gfx::Texture *normalTex = normalMappingEnabled ? resolveNormalTexture(material) : nullptr;
+		if (normalTex) {
+			glActiveTexture(GL_TEXTURE1);
+			normalTex->bind();
+			glActiveTexture(GL_TEXTURE0);
+		}
+
 		_shader->setUniform("textured", tex != nullptr);
+		_shader->setUniform("hasNormalMap", normalTex != nullptr);
 		_shader->setUniform("color", Math::Vector3d(material->r, material->g, material->b));
 
 		GLuint ebo = _faceEBO[*face];
@@ -122,6 +165,17 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	    StarkSettings->getBoolSetting(Settings::kShadow)) {
 		glEnable(GL_BLEND);
 		glEnable(GL_STENCIL_TEST);
+
+		// The jittered passes all draw at the same depth. Don't write depth,
+		// otherwise the first pass prevents the others from accumulating.
+		glDepthMask(GL_FALSE);
+
+		// The shadow lies on the floor plane, where depth-mapped backgrounds
+		// write nearly the same depth values. Pull the shadow slightly towards
+		// the camera so it isn't rejected by its own receiving surface, while
+		// still being clipped by genuinely closer scene geometry.
+		glEnable(GL_POLYGON_OFFSET_FILL);
+		glPolygonOffset(-1.0f, -4.0f);
 
 		_shadowShader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
 		_shadowShader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
@@ -139,14 +193,70 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 
 		Math::Matrix4 modelInverse = model;
 		modelInverse.inverse();
-		setShadowUniform(lights, position, modelInverse.getRotation());
+		Math::Matrix3 worldToModelRot = modelInverse.getRotation();
+		Math::Vector3d worldDirection = computeShadowLightDirection(lights, position);
 
-		for (Common::Array<Face *>::const_iterator face = faces.begin(); face != faces.end(); ++face) {
-			GLuint ebo = _faceEBO[*face];
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-			glDrawElements(GL_TRIANGLES, (*face)->vertexIndices.size(), GL_UNSIGNED_INT, 0);
+		bool softShadows = StarkSettings->getBoolSetting(Settings::kSoftShadows);
+		// Runtime-adjustable quality: fewer passes are much cheaper with the
+		// high-poly enhanced meshes (each pass redraws the whole mesh)
+		int passCount = softShadows
+				? CLIP((int)ConfMan.getInt("shadow_passes"), 1, (int)kShadowPassCount)
+				: 1;
+
+		// Opacity of the fully covered shadow core
+		static const float kCoreDarkness = 0.65f;
+
+		// Sample offsets simulating an area light: center + two rings.
+		// The radius shrinks with fewer passes so the samples stay densely
+		// overlapped - a darker, crisper shadow - instead of a faint scatter.
+		float jitterRadius = 0.03f * sqrtf(passCount / (float)kShadowPassCount);
+		static const float kJitterX[kShadowPassCount] = {
+			 0.0f,
+			 0.5f,    0.1545f, -0.4045f, -0.4045f,  0.1545f,
+			 0.951f,  0.588f,   0.0f,    -0.588f,  -0.951f,
+			-0.951f, -0.588f,   0.0f,     0.588f,   0.951f
+		};
+		static const float kJitterY[kShadowPassCount] = {
+			 0.0f,
+			 0.0f,    0.4755f,  0.294f,  -0.294f,  -0.4755f,
+			 0.309f,  0.809f,   1.0f,     0.809f,   0.309f,
+			-0.309f, -0.809f,  -1.0f,    -0.809f,  -0.309f
+		};
+
+		// Uniform per-pass opacity that converges to kCoreDarkness where all
+		// the passes overlap, independent of pass count. This keeps the shadow
+		// equally dark at 4 or 16 passes (only the softness changes).
+		if (softShadows) {
+			float passAlpha = 1.0f - powf(1.0f - kCoreDarkness, 1.0f / passCount);
+			_shadowShader->setUniform1f("shadowAlpha", passAlpha);
+		} else {
+			_shadowShader->setUniform1f("shadowAlpha", 0.5f);
 		}
 
+		for (int pass = 0; pass < passCount; pass++) {
+			Math::Vector3d jitteredDirection = worldDirection;
+			jitteredDirection.x() += kJitterX[pass] * jitterRadius;
+			jitteredDirection.y() += kJitterY[pass] * jitterRadius;
+
+			// Transform the direction to the model space and pass to the shader
+			jitteredDirection = worldToModelRot * jitteredDirection;
+			_shadowShader->setUniform("lightDirection", jitteredDirection);
+
+			if (pass > 0) {
+				// The stencil buffer prevents self-overlapping geometry from
+				// darkening twice within a pass. Reset it so the passes accumulate.
+				glClear(GL_STENCIL_BUFFER_BIT);
+			}
+
+			for (Common::Array<Face *>::const_iterator face = faces.begin(); face != faces.end(); ++face) {
+				GLuint ebo = _faceEBO[*face];
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+				glDrawElements(GL_TRIANGLES, (*face)->vertexIndices.size(), GL_UNSIGNED_INT, 0);
+			}
+		}
+
+		glDisable(GL_POLYGON_OFFSET_FILL);
+		glDepthMask(GL_TRUE);
 		glDisable(GL_BLEND);
 		glDisable(GL_STENCIL_TEST);
 
@@ -306,8 +416,8 @@ void OpenGLSActorRenderer::setLightArrayUniform(const LightEntryArray &lights) {
 	}
 }
 
-void OpenGLSActorRenderer::setShadowUniform(const LightEntryArray &lights, const Math::Vector3d &actorPosition,
-                                            Math::Matrix3 worldToModelRot) {
+Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntryArray &lights,
+                                            const Math::Vector3d &actorPosition) {
 	Math::Vector3d sumDirection;
 	bool hasLight = false;
 
@@ -357,9 +467,7 @@ void OpenGLSActorRenderer::setShadowUniform(const LightEntryArray &lights, const
 		sumDirection.z() = -1;
 	}
 
-	//Transform the direction to the model space and pass to the shader
-	sumDirection = worldToModelRot * sumDirection;
-	_shadowShader->setUniform("lightDirection", sumDirection);
+	return sumDirection;
 }
 
 bool OpenGLSActorRenderer::getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,

@@ -71,12 +71,13 @@ protected:
 
 	Common::Array<StaticLocationWidget *> _widgets;
 
+	/** Delete all widgets and reset hover state (for rebuilding a page) */
+	void freeWidgets();
+
 private:
 	const char *_locationName;
 	Resources::Location *_location;
 	int _hoveredWidgetIndex;
-
-	void freeWidgets();
 };
 
 typedef Common::Functor0<void> WidgetOnClickCallback;

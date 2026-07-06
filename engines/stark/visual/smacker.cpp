@@ -29,12 +29,137 @@
 #include "engines/stark/services/settings.h"
 
 #include "common/str.h"
+#include "common/str-array.h"
+#include "common/algorithm.h"
 #include "common/archive.h"
+#include "common/compression/unzip.h"
+
+#include "graphics/surface.h"
+
+#include "image/png.h"
 
 #include "video/bink_decoder.h"
 #include "video/smk_decoder.h"
+#include "video/video_decoder.h"
 
 namespace Stark {
+
+/**
+ * A minimal video decoder that plays a fixed-rate sequence of pre-decoded RGBA
+ * frames. Used for the ".hdanim" HD override packs (see loadFrameSequence).
+ *
+ * Implemented against the standard Video::VideoDecoder interface so the whole
+ * of VisualSmacker (timing, rewind, alpha, hit-testing) works with it unchanged.
+ */
+class FrameSequenceDecoder : public Video::VideoDecoder {
+	class FrameSequenceTrack : public Video::VideoDecoder::FixedRateVideoTrack {
+	public:
+		FrameSequenceTrack(const Common::Array<Graphics::Surface *> &frames, Common::Rational fps) :
+				_frames(frames), _frameRate(fps), _curFrame(-1) {}
+
+		~FrameSequenceTrack() override {
+			for (uint i = 0; i < _frames.size(); i++) {
+				_frames[i]->free();
+				delete _frames[i];
+			}
+		}
+
+		uint16 getWidth() const override { return _frames[0]->w; }
+		uint16 getHeight() const override { return _frames[0]->h; }
+		Graphics::PixelFormat getPixelFormat() const override { return _frames[0]->format; }
+		int getCurFrame() const override { return _curFrame; }
+		int getFrameCount() const override { return _frames.size(); }
+
+		const Graphics::Surface *decodeNextFrame() override {
+			_curFrame++;
+			int idx = CLIP<int>(_curFrame, 0, (int)_frames.size() - 1);
+			return _frames[idx];
+		}
+
+		// Must advertise rewindability (base defaults to isSeekable()==false),
+		// otherwise VideoDecoder::rewind() no-ops and looping animations freeze
+		// on their last frame after one pass.
+		bool isRewindable() const override { return true; }
+		bool rewind() override { _curFrame = -1; return true; }
+
+	protected:
+		Common::Rational getFrameRate() const override { return _frameRate; }
+
+	private:
+		Common::Array<Graphics::Surface *> _frames;
+		Common::Rational _frameRate;
+		int _curFrame;
+	};
+
+public:
+	FrameSequenceDecoder() : _frameRate(10, 1) {}
+
+	bool loadStream(Common::SeekableReadStream *stream) override {
+		close();
+
+		// The stream is a zip: frames/NNNN.png (RGBA) + meta.txt ("fps=..").
+		Common::Archive *zip = Common::makeZipArchive(stream); // takes ownership
+		if (!zip) {
+			return false;
+		}
+
+		// Frame rate from meta.txt (default 10 fps if absent).
+		Common::SeekableReadStream *meta = zip->createReadStreamForMember("meta.txt");
+		if (meta) {
+			while (!meta->eos()) {
+				Common::String line = meta->readLine();
+				if (line.hasPrefix("fps=")) {
+					int fps = atoi(line.c_str() + 4);
+					if (fps > 0) {
+						_frameRate = Common::Rational(fps, 1);
+					}
+				}
+			}
+			delete meta;
+		}
+
+		// Collect and sort the frame members by name (0000.png ... 00NN.png).
+		Common::ArchiveMemberList memberList;
+		zip->listMembers(memberList);
+		Common::Array<Common::ArchiveMemberPtr> members;
+		for (Common::ArchiveMemberList::const_iterator it = memberList.begin(); it != memberList.end(); ++it) {
+			if ((*it)->getName().hasSuffix(".png")) {
+				members.push_back(*it);
+			}
+		}
+		Common::sort(members.begin(), members.end(),
+			[](const Common::ArchiveMemberPtr &a, const Common::ArchiveMemberPtr &b) {
+				return a->getName() < b->getName();
+			});
+
+		Common::Array<Graphics::Surface *> frames;
+		for (uint i = 0; i < members.size(); i++) {
+			Common::SeekableReadStream *ps = members[i]->createReadStream();
+			if (!ps) {
+				continue;
+			}
+			Image::PNGDecoder png;
+			if (png.loadStream(*ps) && png.getSurface()) {
+				frames.push_back(png.getSurface()->convertTo(Gfx::Driver::getRGBAPixelFormat()));
+			}
+			delete ps;
+		}
+
+		delete zip;
+
+		if (frames.empty()) {
+			return false;
+		}
+
+		addTrack(new FrameSequenceTrack(frames, _frameRate));
+		return true;
+	}
+
+	Common::Rational getFrameRate() const { return _frameRate; }
+
+private:
+	Common::Rational _frameRate;
+};
 
 VisualSmacker::VisualSmacker(Gfx::Driver *gfx) :
 		Visual(TYPE),
@@ -77,6 +202,23 @@ void VisualSmacker::loadBink(Common::SeekableReadStream *stream) {
 	_decoder->setOutputPixelFormat(Gfx::Driver::getRGBAPixelFormat());
 
 	init();
+}
+
+bool VisualSmacker::loadFrameSequence(Common::SeekableReadStream *stream) {
+	FrameSequenceDecoder *decoder = new FrameSequenceDecoder();
+	decoder->setSoundType(Audio::Mixer::kSFXSoundType);
+	if (!decoder->loadStream(stream)) {
+		delete decoder;
+		return false; // caller falls back to the original video; state untouched
+	}
+
+	delete _bitmap;
+	delete _decoder;
+	_bitmap = nullptr;
+	_decoder = decoder;
+
+	init();
+	return true;
 }
 
 void VisualSmacker::init() {
@@ -215,6 +357,11 @@ void VisualSmacker::rewind() {
 		Video::BinkDecoder *bink = dynamic_cast<Video::BinkDecoder *>(_decoder);
 		if (bink) {
 			originalFrameRate = bink->getFrameRate();
+		}
+
+		FrameSequenceDecoder *frames = dynamic_cast<FrameSequenceDecoder *>(_decoder);
+		if (frames) {
+			originalFrameRate = frames->getFrameRate();
 		}
 
 		Common::Rational playbackRate = _overridenFramerate / originalFrameRate;

@@ -272,4 +272,8 @@ Common::Array<Common::Point> GameInterface::listExitPositions() {
 	return StarkGlobal->getCurrent()->getLocation()->listExitPositions();
 }
 
+Common::Array<Resources::Item::Hotspot> GameInterface::listHotspots() {
+	return StarkGlobal->getCurrent()->getLocation()->listHotspots();
+}
+
 } // End of namespace Stark

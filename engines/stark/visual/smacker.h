@@ -52,6 +52,16 @@ public:
 
 	void loadSmacker(Common::SeekableReadStream *stream);
 	void loadBink(Common::SeekableReadStream *stream);
+
+	/**
+	 * Load an HD ".hdanim" override: a zip of upscaled RGBA PNG frames plus a
+	 * meta.txt with the frame rate. Plays through the same decoder interface as
+	 * Smacker/Bink, so timing, looping and alpha compositing are unchanged; the
+	 * high-res frames are rendered at the original video's footprint (super-
+	 * sampled), which is how the ambient animated characters are upgraded.
+	 */
+	bool loadFrameSequence(Common::SeekableReadStream *stream);
+
 	void update();
 	void render(const Common::Point &position);
 	bool isDone();

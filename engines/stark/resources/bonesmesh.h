@@ -54,6 +54,12 @@ public:
 	/** Obtain the mesh object */
 	Model *getModel();
 
+	/** Get the mesh file name inside the archive */
+	const Common::Path &getFilename() const { return _filename; }
+
+	/** Get the archive the mesh was loaded from */
+	const Common::Path &getArchiveName() const { return _archiveName; }
+
 protected:
 	void printData() override;
 

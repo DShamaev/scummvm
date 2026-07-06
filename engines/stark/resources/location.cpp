@@ -28,6 +28,7 @@
 
 #include "engines/stark/resources/anim.h"
 #include "engines/stark/resources/container.h"
+#include "engines/stark/resources/image.h"
 #include "engines/stark/resources/item.h"
 #include "engines/stark/resources/layer.h"
 #include "engines/stark/resources/level.h"
@@ -36,6 +37,10 @@
 
 #include "engines/stark/scene.h"
 #include "engines/stark/services/global.h"
+#include "engines/stark/visual/image.h"
+#include "engines/stark/visual/visual.h"
+
+#include "graphics/surface.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/stateprovider.h"
 #include "engines/stark/services/userinterface.h"
@@ -50,6 +55,7 @@ Location::~Location() {
 
 Location::Location(Object *parent, byte subType, uint16 index, const Common::String &name) :
 		Object(parent, subType, index, name),
+		_backgroundVisualCache(nullptr),
 		_canScroll(false),
 		_currentLayer(nullptr),
 		_hasActiveScroll(false),
@@ -581,6 +587,95 @@ Common::Array<Common::Point> Location::listExitPositions() {
 	}
 
 	return positions;
+}
+
+Gfx::Color Location::getBackgroundColorAtPoint(const Common::Point &point, int radius) {
+	if (!_backgroundVisualCache) {
+		Common::Array<Image *> images = listChildrenRecursive<Image>();
+		for (uint i = 0; i < images.size(); i++) {
+			Item *parentItem = images[i]->findParent<Item>();
+			if (!parentItem || parentItem->getSubType() != Item::kItemBackground) {
+				continue;
+			}
+
+			Visual *visual = images[i]->getVisual();
+			VisualImageXMG *imageVisual = visual ? visual->get<VisualImageXMG>() : nullptr;
+			if (imageVisual && imageVisual->getSurface()) {
+				_backgroundVisualCache = imageVisual;
+				break;
+			}
+		}
+	}
+
+	if (!_backgroundVisualCache) {
+		return Gfx::Color(0xFF, 0xFF, 0xFF);
+	}
+
+	// Build a small blurred tint map of the background once, so that
+	// sampling positions moving across detailed floor art produce smooth,
+	// low frequency color changes instead of tracking every texture edge
+	if (_bgTintMap.empty()) {
+		const Graphics::Surface *surface = _backgroundVisualCache->getSurface();
+
+		_bgTintMap.resize(kTintMapWidth * kTintMapHeight * 3);
+		for (int ty = 0; ty < kTintMapHeight; ty++) {
+			int32 sy0 = ty * surface->h / kTintMapHeight;
+			int32 sy1 = MAX<int32>((ty + 1) * surface->h / kTintMapHeight, sy0 + 1);
+			for (int tx = 0; tx < kTintMapWidth; tx++) {
+				int32 sx0 = tx * surface->w / kTintMapWidth;
+				int32 sx1 = MAX<int32>((tx + 1) * surface->w / kTintMapWidth, sx0 + 1);
+
+				uint32 sumR = 0, sumG = 0, sumB = 0, count = 0;
+				for (int32 y = sy0; y < sy1; y++) {
+					const uint8 *src = (const uint8 *) surface->getBasePtr(sx0, y);
+					for (int32 x = sx0; x < sx1; x++) {
+						sumR += src[0];
+						sumG += src[1];
+						sumB += src[2];
+						src += 4;
+						count++;
+					}
+				}
+
+				float *dst = &_bgTintMap[(ty * kTintMapWidth + tx) * 3];
+				dst[0] = sumR / (float) count;
+				dst[1] = sumG / (float) count;
+				dst[2] = sumB / (float) count;
+			}
+		}
+	}
+
+	// Bilinear sample of the tint map, in original game view coordinates
+	float fx = CLIP(point.x / 640.0f, 0.0f, 1.0f) * (kTintMapWidth - 1);
+	float fy = CLIP(point.y / 365.0f, 0.0f, 1.0f) * (kTintMapHeight - 1);
+	int x0 = (int) fx, y0 = (int) fy;
+	int x1 = MIN(x0 + 1, (int) kTintMapWidth - 1);
+	int y1 = MIN(y0 + 1, (int) kTintMapHeight - 1);
+	float ax = fx - x0, ay = fy - y0;
+
+	float rgb[3];
+	for (int c = 0; c < 3; c++) {
+		float top = _bgTintMap[(y0 * kTintMapWidth + x0) * 3 + c] * (1.0f - ax)
+		          + _bgTintMap[(y0 * kTintMapWidth + x1) * 3 + c] * ax;
+		float bottom = _bgTintMap[(y1 * kTintMapWidth + x0) * 3 + c] * (1.0f - ax)
+		             + _bgTintMap[(y1 * kTintMapWidth + x1) * 3 + c] * ax;
+		rgb[c] = top * (1.0f - ay) + bottom * ay;
+	}
+
+	return Gfx::Color((byte) rgb[0], (byte) rgb[1], (byte) rgb[2]);
+}
+
+Common::Array<Item::Hotspot> Location::listHotspots() {
+	Common::Array<Item *> items = listChildrenRecursive<Item>();
+	Common::Array<Item::Hotspot> hotspots;
+
+	Common::Array<Item *>::iterator element = items.begin();
+	while (element != items.end()) {
+		hotspots.push_back((*element)->listHotspots());
+		++element;
+	}
+
+	return hotspots;
 }
 
 } // End of namespace Resources

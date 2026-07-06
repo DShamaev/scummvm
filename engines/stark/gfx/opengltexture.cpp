@@ -23,14 +23,37 @@
 
 #include "engines/stark/gfx/driver.h"
 
+#include "common/config-manager.h"
 #include "graphics/surface.h"
 
 #if defined(USE_OPENGL_GAME) || defined(USE_OPENGL_SHADERS)
 
 #include "graphics/opengl/context.h"
 
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT     0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
 namespace Stark {
 namespace Gfx {
+
+// Cached max anisotropy the driver supports: 0 = not queried, -1 = unsupported
+static float g_maxAnisotropy = 0.0f;
+
+static float queryMaxAnisotropy() {
+	if (g_maxAnisotropy == 0.0f) {
+		const char *extensions = (const char *) glGetString(GL_EXTENSIONS);
+		if (extensions && strstr(extensions, "texture_filter_anisotropic")) {
+			GLfloat maxAniso = 1.0f;
+			glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
+			g_maxAnisotropy = maxAniso;
+		} else {
+			g_maxAnisotropy = -1.0f;
+		}
+	}
+	return g_maxAnisotropy;
+}
 
 OpenGlTexture::OpenGlTexture() :
 	Texture(),
@@ -81,8 +104,25 @@ void OpenGlTexture::setLevelCount(uint32 count) {
 		if (OpenGLContext.textureMaxLevelSupported) {
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, count - 1);
 
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+			// Trilinear filtering blends between mip levels, removing the
+			// abrupt softness of nearest-mip selection
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+			// Anisotropic filtering keeps textures sharp on surfaces seen at
+			// an angle - most of a character's body - instead of collapsing
+			// to a low, blurry mip. Capped at a moderate level: on macOS the
+			// GL-over-Metal path makes high anisotropy expensive, and 4x looks
+			// nearly identical to 16x on these textures.
+			if (ConfMan.getBool("texture_anisotropy")) {
+				float maxAniso = queryMaxAnisotropy();
+				int wanted = ConfMan.hasKey("texture_anisotropy_level")
+						? ConfMan.getInt("texture_anisotropy_level") : 4;
+				float level = MIN(maxAniso, (float)wanted);
+				if (level > 1.0f) {
+					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, level);
+				}
+			}
 		}
 
 		// TODO: Provide a fallback if this isn't available.

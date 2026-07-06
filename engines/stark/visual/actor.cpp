@@ -39,7 +39,8 @@ VisualActor::VisualActor() :
 		_time(0),
 		_modelIsDirty(true),
 		_faceTextureName(' '),
-		_castsShadow(false) {
+		_castsShadow(false),
+		_ambientTint(1.0f, 1.0f, 1.0f) {
 }
 
 VisualActor::~VisualActor() {
@@ -88,6 +89,25 @@ const Gfx::Texture *VisualActor::resolveTexture(const Material *material) const 
 	}
 
 	return texture;
+}
+
+const Gfx::Texture *VisualActor::resolveNormalTexture(const Material *material) const {
+	if (!_textureSet) {
+		return nullptr;
+	}
+
+	// Normal maps share the color texture's name with a "_n" suffix inserted
+	// before the extension: "foo.bmp" -> "foo_n.bmp". They are shipped in the
+	// same .tm.zip override archive as the upscaled color textures.
+	Common::String name = material->texture;
+	int dot = name.findLastOf('.');
+	if (dot > 0) {
+		name = Common::String(name.c_str(), dot) + "_n" + Common::String(name.c_str() + dot);
+	} else {
+		name += "_n";
+	}
+
+	return _textureSet->getTexture(name);
 }
 
 void VisualActor::setTime(uint32 time) {

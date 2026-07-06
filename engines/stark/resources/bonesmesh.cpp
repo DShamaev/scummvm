@@ -21,10 +21,12 @@
 
 #include "engines/stark/resources/bonesmesh.h"
 
+#include "engines/stark/debug.h"
 #include "engines/stark/model/animhandler.h"
 #include "engines/stark/model/model.h"
 #include "engines/stark/services/archiveloader.h"
 #include "engines/stark/services/services.h"
+#include "engines/stark/services/settings.h"
 #include "engines/stark/formats/xrc.h"
 
 namespace Stark {
@@ -46,12 +48,28 @@ void BonesMesh::readData(Formats::XRCReadStream *stream) {
 }
 
 void BonesMesh::onPostRead() {
-	ArchiveReadStream *stream = StarkArchiveLoader->getFile(_filename, _archiveName);
+	// External replacement mesh, allowing modded higher detail models.
+	// Same format as the original meshes, in <archive-dir>/xarc/<filename>
+	if (StarkSettings->isAssetsModEnabled()) {
+		Common::SeekableReadStream *externalStream = StarkArchiveLoader->getExternalFile(_filename, _archiveName);
+		if (externalStream) {
+			debugC(kDebugModding, "Loading replacement mesh for %s", _filename.toString().c_str());
 
-	_model = new Model();
-	_model->readFromStream(stream);
+			ArchiveReadStream *modelStream = new ArchiveReadStream(externalStream);
+			_model = new Model();
+			_model->readFromStream(modelStream);
+			delete modelStream;
+		}
+	}
 
-	delete stream;
+	if (!_model) {
+		ArchiveReadStream *stream = StarkArchiveLoader->getFile(_filename, _archiveName);
+
+		_model = new Model();
+		_model->readFromStream(stream);
+
+		delete stream;
+	}
 }
 
 Model *BonesMesh::getModel() {

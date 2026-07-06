@@ -27,7 +27,11 @@ namespace Gfx {
 SurfaceRenderer::SurfaceRenderer() :
 		_noScalingOverride(false),
 		_fadeLevel(0),
-		_snapToGrid(false) {
+		_snapToGrid(false),
+		_depthBitmap(nullptr),
+		_depthZMin(0.0f),
+		_depthZMax(1.0f),
+		_depthBias(-1.0f) {
 }
 
 SurfaceRenderer::~SurfaceRenderer() {
@@ -43,6 +47,13 @@ void SurfaceRenderer::setFadeLevel(float fadeLevel) {
 
 void SurfaceRenderer::setSnapToGrid(bool snapToGrid) {
 	_snapToGrid = snapToGrid;
+}
+
+void SurfaceRenderer::setDepthBitmap(const Bitmap *bitmap, float zMin, float zMax, float bias) {
+	_depthBitmap = bitmap;
+	_depthZMin = zMin;
+	_depthZMax = zMax;
+	_depthBias = bias;
 }
 
 } // End of namespace Gfx

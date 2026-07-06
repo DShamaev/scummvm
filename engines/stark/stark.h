@@ -84,7 +84,10 @@ enum STARKAction {
 	kActionPrevDialogue,
 	kActionNextDialogue,
 	kActionSelectDialogue,
-	kActionSkip
+	kActionSkip,
+	kActionToggleHotspots,
+	kActionQuickSave,
+	kActionQuickLoad
 };
 
 
@@ -114,6 +117,14 @@ protected:
 	Common::Error saveGameState(int slot, const Common::String &desc, bool isAutosave = false) override;
 	void pauseEngineIntern(bool pause) override;
 
+public:
+	/** Save to the quicksave slot, or load from it */
+	void quickSave();
+	void quickLoad();
+
+	/** Autosave on location change if enabled */
+	void autosaveOnLocationChange();
+
 private:
 	void mainLoop();
 	void updateDisplayScene();
@@ -130,6 +141,14 @@ private:
 	// Double click handling
 	static const uint _doubleClickDelay = 500; // ms
 	uint _lastClickTime;
+
+	// A dedicated slot for quicksaves, high enough not to collide with
+	// the player's manual saves
+	static const int _quickSaveSlot = 999;
+
+	// Track the location to autosave only on genuine location changes
+	int _lastAutosaveLevel;
+	int _lastAutosaveLocation;
 };
 
 } // End of namespace Stark

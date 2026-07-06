@@ -73,6 +73,12 @@ public:
 	/** Get the hotspot position for a given index of a pat-table */
 	Common::Point getHotspotPosition(uint index) const;
 
+	/** Get the image file name inside the archive */
+	const Common::Path &getFilename() const { return _filename; }
+
+	/** Get the archive the image was loaded from */
+	const Common::Path &getArchiveName() const { return _archiveName; }
+
 protected:
 	void printData() override;
 	bool isPointInPolygon(const Polygon &polygon, const Common::Point &point) const;
@@ -113,6 +119,7 @@ protected:
 	void initVisual() override;
 
 	bool loadPNGOverride(Stark::VisualImageXMG *visual) const;
+	void loadDepthMapOverride(Stark::VisualImageXMG *visual) const;
 
 	bool _noName;
 };

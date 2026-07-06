@@ -98,6 +98,9 @@ public:
 	 */
 	void readFromStream(ArchiveReadStream *stream);
 
+	const Common::String &getName() const { return _name; }
+	float getU2() const { return _u2; }
+
 	const Common::Array<VertNode *> &getVertices() const { return _vertices; }
 	const Common::Array<Face *> &getFaces() const { return _faces; }
 	const Common::Array<Material *> &getMaterials() const { return _materials; }

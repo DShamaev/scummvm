@@ -20,6 +20,10 @@
  */
 
 #include "engines/stark/ui/world/gamewindow.h"
+
+#include "engines/engine.h"
+
+#include "engines/stark/console.h"
 #include "engines/stark/scene.h"
 #include "engines/stark/gfx/driver.h"
 #include "engines/stark/resources/anim.h"
@@ -31,8 +35,17 @@
 #include "engines/stark/services/global.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/staticprovider.h"
+#include "engines/stark/services/fontprovider.h"
 #include "engines/stark/services/gameinterface.h"
+#include "engines/stark/services/settings.h"
 #include "engines/stark/services/userinterface.h"
+#include "engines/stark/gfx/bitmap.h"
+#include "engines/stark/gfx/color.h"
+#include "engines/stark/gfx/surfacerenderer.h"
+
+#include "common/config-manager.h"
+#include "common/system.h"
+#include "graphics/surface.h"
 #include "engines/stark/ui/cursor.h"
 #include "engines/stark/ui/world/actionmenu.h"
 #include "engines/stark/ui/world/inventorywindow.h"
@@ -52,6 +65,9 @@ GameWindow::GameWindow(Gfx::Driver *gfx, Cursor *cursor, ActionMenu *actionMenu,
 	_visible = true;
 
 	_fadeRenderer = _gfx->createFadeRenderer();
+	_surfaceRenderer = _gfx->createSurfaceRenderer();
+
+	buildMarkerBitmaps();
 
 	_exitArrow = StarkStaticProvider->getUIElement(StaticProvider::kExitArrow);
 	_exitArrowLeft = StarkStaticProvider->getUIElement(StaticProvider::kExitArrowLeft);
@@ -63,13 +79,117 @@ GameWindow::GameWindow(Gfx::Driver *gfx, Cursor *cursor, ActionMenu *actionMenu,
 
 GameWindow::~GameWindow() {
 	delete _fadeRenderer;
+	delete _surfaceRenderer;
+	for (int i = 0; i < 4; i++) {
+		delete _hotspotMarkers[i];
+	}
+	clearTextCaches();
+}
+
+void GameWindow::buildMarkerBitmaps() {
+	for (int i = 0; i < 4; i++) {
+		delete _hotspotMarkers[i];
+		_hotspotMarkers[i] = nullptr;
+	}
+
+	if (ConfMan.getBool("marker_colorblind")) {
+		// Colorblind-safe: distinct by brightness and hue spacing (blue,
+		// yellow, vermilion), the Okabe-Ito-inspired safe set
+		_hotspotMarkers[0] = createMarkerBitmap(1.0f, 1.0f, 1.0f);
+		_hotspotMarkers[1] = createMarkerBitmap(0.35f, 0.60f, 1.0f); // look: blue
+		_hotspotMarkers[2] = createMarkerBitmap(0.90f, 0.60f, 0.00f); // use: orange-yellow
+		_hotspotMarkers[3] = createMarkerBitmap(0.95f, 0.35f, 0.10f); // talk: vermilion
+	} else {
+		_hotspotMarkers[0] = createMarkerBitmap(1.0f, 1.0f, 1.0f);
+		_hotspotMarkers[1] = createMarkerBitmap(0.45f, 0.9f, 1.0f);
+		_hotspotMarkers[2] = createMarkerBitmap(1.0f, 0.75f, 0.35f);
+		_hotspotMarkers[3] = createMarkerBitmap(0.55f, 1.0f, 0.55f);
+	}
+
+	_markerColorblindCache = ConfMan.getBool("marker_colorblind");
+}
+
+Gfx::Bitmap *GameWindow::createMarkerBitmap(float tintR, float tintG, float tintB) {
+	static const int kMarkerSize = 32;
+	const float center = (kMarkerSize - 1) / 2.0f;
+	const float radius = kMarkerSize / 2.0f;
+
+	Graphics::Surface surface;
+	surface.create(kMarkerSize, kMarkerSize, Gfx::Driver::getRGBAPixelFormat());
+
+	for (int y = 0; y < kMarkerSize; y++) {
+		uint32 *dst = (uint32 *) surface.getBasePtr(0, y);
+		for (int x = 0; x < kMarkerSize; x++) {
+			float dx = x - center;
+			float dy = y - center;
+			float d = sqrtf(dx * dx + dy * dy) / radius;
+
+			// Soft dot: dark halo fading out at the edge, bright tinted core
+			float halo = CLIP(1.0f - d, 0.0f, 1.0f);
+			halo = halo * halo * (3.0f - 2.0f * halo); // smoothstep
+			float core = CLIP(1.0f - d / 0.55f, 0.0f, 1.0f);
+			core = core * core * (3.0f - 2.0f * core);
+
+			// Pre-multiplied alpha, as expected by the surface renderer
+			byte alpha = (byte) (halo * 210.0f);
+			byte intensity = (byte) (core * alpha);
+			*dst++ = surface.format.ARGBToColor(alpha,
+					(byte) (intensity * tintR),
+					(byte) (intensity * tintG),
+					(byte) (intensity * tintB));
+		}
+	}
+
+	Gfx::Bitmap *bitmap = _gfx->createBitmap(&surface);
+	bitmap->setSamplingFilter(Gfx::Bitmap::kLinear);
+
+	surface.free();
+	return bitmap;
+}
+
+VisualText *GameWindow::getHotspotLabel(const Common::String &title) {
+	if (_hotspotLabels.contains(title)) {
+		return _hotspotLabels[title];
+	}
+
+	VisualText *text = new VisualText(_gfx);
+	text->setText(title);
+	text->setColor(Gfx::Color(0xFF, 0xFF, 0xFF));
+	text->setBackgroundColor(Gfx::Color(0x00, 0x00, 0x00, 0x50));
+	text->setFont(FontProvider::kSmallFont);
+
+	_hotspotLabels[title] = text;
+	return text;
+}
+
+void GameWindow::clearTextCaches() {
+	for (Common::HashMap<Common::String, VisualText *>::iterator it = _hotspotLabels.begin();
+			it != _hotspotLabels.end(); ++it) {
+		delete it->_value;
+	}
+	_hotspotLabels.clear();
+
 }
 
 void GameWindow::onRender() {
+	// Advance the all-locations dump crawl, if one is running
+	Console *console = static_cast<Console *>(g_engine->getDebugger());
+	if (console) {
+		console->tickDumpCrawl();
+	}
+
 	// List the items to render
 	Resources::Location *location = StarkGlobal->getCurrent()->getLocation();
 	_renderEntries = location->listRenderEntries();
 	Gfx::LightEntryArray lightEntries = location->listLightEntries();
+
+	// Track the focus subject's depth for depth of field
+	Resources::ModelItem *april = StarkGlobal->getCurrent()->getInteractive();
+	if (april) {
+		Math::Vector3d eye = april->getPosition3D();
+		StarkScene->getViewMatrix().transform(&eye, true);
+		StarkScene->setFocusDepth(eye.length());
+	}
 
 	// Render all the scene items
 	Gfx::RenderEntryArray::iterator element = _renderEntries.begin();
@@ -102,11 +222,73 @@ void GameWindow::onRender() {
 		}
 	}
 
+	if (StarkSettings->getBoolSetting(Settings::kHighlightHotspots)) {
+		renderHotspotMarkers();
+	}
+
 	float fadeLevel = StarkScene->getFadeLevel();
 	if ((1.0f - fadeLevel) > 0.00001f) {
 		_fadeRenderer->render(fadeLevel);
 	}
 }
+
+void GameWindow::renderHotspotMarkers() {
+	Common::Array<Resources::Item::Hotspot> hotspots = StarkGameInterface->listHotspots();
+
+	// Rebuild the palette if the colorblind setting was toggled
+	if (ConfMan.getBool("marker_colorblind") != _markerColorblindCache) {
+		buildMarkerBitmaps();
+	}
+
+	// Pulse the marker size over a one second cycle, scaled by the setting
+	float scale = CLIP(ConfMan.getInt("marker_scale"), 50, 250) / 100.0f;
+	uint32 cycle = g_system->getMillis() % 1000;
+	float pulse = (cycle < 500 ? cycle : 1000 - cycle) / 500.0f;
+	int size = (int) ((14 + 6.0f * pulse) * scale);
+
+	for (uint i = 0; i < hotspots.size(); ++i) {
+		Common::Point pos = hotspots[i].position;
+
+		// The game's hotspot points are label anchors, placed above the object
+		// so the tooltip text does not cover it. Nudge the dot down onto the
+		// object; the label still sits above (see labelPos below).
+		Common::Point markerPos = pos;
+		markerPos.y += 16;
+
+		// Keep the markers inside the viewport
+		markerPos.x = CLIP<int16>(markerPos.x, size / 2, Gfx::Driver::kGameViewportWidth - size / 2);
+		markerPos.y = CLIP<int16>(markerPos.y, size / 2, Gfx::Driver::kGameViewportHeight - size / 2);
+
+		// Tint the marker by the hotspot's default action
+		Gfx::Bitmap *marker = _hotspotMarkers[0];
+		switch (hotspots[i].defaultAction) {
+			case Resources::PATTable::kActionLook:
+				marker = _hotspotMarkers[1];
+				break;
+			case Resources::PATTable::kActionUse:
+				marker = _hotspotMarkers[2];
+				break;
+			case Resources::PATTable::kActionTalk:
+				marker = _hotspotMarkers[3];
+				break;
+			default:
+				break;
+		}
+
+		_surfaceRenderer->render(marker, Common::Point(markerPos.x - size / 2, markerPos.y - size / 2), size, size);
+
+		// Name label next to the marker, kept at the original anchor (above)
+		if (!hotspots[i].title.empty()) {
+			VisualText *label = getHotspotLabel(hotspots[i].title);
+			Common::Rect rect = label->getRect();
+			Common::Point labelPos(pos.x + 12, pos.y - 16);
+			labelPos.x = CLIP<int16>(labelPos.x, 0, Gfx::Driver::kGameViewportWidth - rect.width());
+			labelPos.y = CLIP<int16>(labelPos.y, 0, Gfx::Driver::kGameViewportHeight - rect.height());
+			label->render(labelPos);
+		}
+	}
+}
+
 
 void GameWindow::onMouseMove(const Common::Point &pos) {
 	_renderEntries = StarkGlobal->getCurrent()->getLocation()->listRenderEntries();
@@ -271,6 +453,9 @@ void GameWindow::reset() {
 	_objectUnderCursor = nullptr;
 	_objectRelativePosition.x = 0;
 	_objectRelativePosition.y = 0;
+
+	// Hotspot titles are location specific
+	clearTextCaches();
 }
 
 void GameWindow::onScreenChanged() {

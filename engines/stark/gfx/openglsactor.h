@@ -65,7 +65,10 @@ protected:
 	void setBoneRotationArrayUniform(OpenGL::Shader *shader, const char *uniform);
 	void setLightArrayUniform(const LightEntryArray &lights);
 
-	void setShadowUniform(const LightEntryArray &lights, const Math::Vector3d &actorPosition, Math::Matrix3 worldToModelRot);
+	/** Number of jittered passes used to soften the shadow penumbra */
+	static const int kShadowPassCount = 16;
+
+	Math::Vector3d computeShadowLightDirection(const LightEntryArray &lights, const Math::Vector3d &actorPosition);
 
 	bool getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
 			Math::Vector3d &direction, float weight = 1.0f);

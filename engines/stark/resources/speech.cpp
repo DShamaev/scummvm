@@ -26,6 +26,7 @@
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/settings.h"
 #include "engines/stark/services/dialogplayer.h"
+#include "engines/stark/services/diary.h"
 #include "engines/stark/services/global.h"
 #include "engines/stark/services/stateprovider.h"
 
@@ -59,6 +60,21 @@ Common::String Speech::getPhrase() const {
 
 void Speech::playSound() {
 	StarkGlobal->setNormalSpeed();
+
+	// Record one-shot lines (observations, scripted asides) into the diary.
+	// Interactive dialog lines are already logged by the DialogPlayer, so
+	// only standalone speeches are added here to avoid double entries.
+	if (!_phrase.empty() && !StarkDialogPlayer->isRunning()) {
+		Common::String title;
+		int32 characterId = getCharacterId();
+		if (characterIsApril()) {
+			title = "April's observations";
+		} else {
+			ItemVisual *characterItem = getCharacterItem();
+			title = characterItem ? characterItem->getName() : "Overheard";
+		}
+		StarkDiary->logStandaloneSpeech(_phrase, characterId, title);
+	}
 
 	if (_playTalkAnim) {
 		setCharacterTalkAnim();

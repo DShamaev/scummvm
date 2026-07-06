@@ -25,6 +25,12 @@
 #include "engines/stark/gfx/bitmap.h"
 #include "engines/stark/gfx/color.h"
 
+#include "engines/stark/scene.h"
+#include "engines/stark/services/services.h"
+#include "engines/stark/services/settings.h"
+
+#include "common/config-manager.h"
+
 #if defined(USE_OPENGL_SHADERS)
 
 #include "graphics/opengl/shader.h"
@@ -36,11 +42,13 @@ OpenGLSSurfaceRenderer::OpenGLSSurfaceRenderer(OpenGLSDriver *gfx) :
 		SurfaceRenderer(),
 		_gfx(gfx) {
 	_shader = _gfx->createSurfaceShaderInstance();
+	_shaderDepth = _gfx->createSurfaceDepthShaderInstance();
 	_shaderFill = _gfx->createSurfaceFillShaderInstance();
 }
 
 OpenGLSSurfaceRenderer::~OpenGLSSurfaceRenderer() {
 	delete _shaderFill;
+	delete _shaderDepth;
 	delete _shader;
 }
 
@@ -52,23 +60,65 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	// Destination rectangle with given width and height
 	_gfx->start2DMode();
 
-	_shader->use();
-	_shader->setUniform1f("fadeLevel", _fadeLevel);
-	_shader->setUniform("snapToGrid", _snapToGrid ? 1 : 0);
-	_shader->setUniform("verOffsetXY", normalizeOriginalCoordinates(dest.x, dest.y));
+	bool useDepth = _depthBitmap != nullptr &&
+	                StarkSettings->getBoolSetting(Settings::kDepthMaps);
+	OpenGL::Shader *shader = useDepth ? _shaderDepth : _shader;
+
+	shader->use();
+	shader->setUniform1f("fadeLevel", _fadeLevel);
+	shader->setUniform("snapToGrid", _snapToGrid ? 1 : 0);
+	shader->setUniform("verOffsetXY", normalizeOriginalCoordinates(dest.x, dest.y));
 	if (_noScalingOverride) {
-		_shader->setUniform("verSizeWH", normalizeCurrentCoordinates(width, height));
+		shader->setUniform("verSizeWH", normalizeCurrentCoordinates(width, height));
 	} else {
-		_shader->setUniform("verSizeWH", normalizeOriginalCoordinates(width, height));
+		shader->setUniform("verSizeWH", normalizeOriginalCoordinates(width, height));
 	}
 
 	Common::Rect nativeViewport = _gfx->getViewport();
-	_shader->setUniform("viewport", Math::Vector2d(nativeViewport.width(), nativeViewport.height()));
+	shader->setUniform("viewport", Math::Vector2d(nativeViewport.width(), nativeViewport.height()));
+
+	if (useDepth) {
+		shader->setUniform("tex", 0);
+		shader->setUniform("depthTex", 1);
+		shader->setUniform("debugShowDepth", ConfMan.getBool("debug_show_depth") ? 1 : 0);
+		shader->setUniform1f("depthZMin", _depthZMin);
+		shader->setUniform1f("depthZMax", _depthZMax);
+		shader->setUniform1f("nearClip", StarkScene->getNearClipPlane());
+		shader->setUniform1f("farClip", StarkScene->getFarClipPlane());
+		// Per-location bias from the depth JSON, falling back to the global
+		// setting. Complex multi-level scenes (e.g. the Academy) need a lower
+		// bias than simple rooms so foreground walls still occlude.
+		float bias = getDepthBias() >= 0.0f
+				? getDepthBias()
+				: CLIP(ConfMan.getInt("depth_bias"), 0, 50) / 100.0f;
+		shader->setUniform1f("depthBias", bias);
+
+		// Publish this background's depth range for the depth fog
+		StarkScene->setBackgroundDepthRange(_depthZMin, _depthZMax);
+
+		glActiveTexture(GL_TEXTURE1);
+		_depthBitmap->bind();
+		glActiveTexture(GL_TEXTURE0);
+
+		// Write the depth of the surface pixels so the 3D items rendered
+		// afterwards are occluded by the closer parts of the surface.
+		// LEQUAL makes overlay props with depth maps only paint over
+		// pixels they are actually in front of (per-pixel prop occlusion).
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LEQUAL);
+		glDepthMask(GL_TRUE);
+	}
 
 	bitmap->bind();
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-	_shader->unbind();
+	if (useDepth) {
+		glDepthFunc(GL_LESS);
+		glDepthMask(GL_FALSE);
+		glDisable(GL_DEPTH_TEST);
+	}
+
+	shader->unbind();
 	_gfx->end2DMode();
 }
 

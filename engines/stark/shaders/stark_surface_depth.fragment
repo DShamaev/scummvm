@@ -1,0 +1,59 @@
+in vec2 Texcoord;
+
+OUTPUT
+
+uniform float fadeLevel;
+uniform sampler2D tex;
+uniform sampler2D depthTex;
+uniform UBOOL debugShowDepth;
+
+// Eye space depth range encoded in the depth texture
+uniform float depthZMin;
+uniform float depthZMax;
+
+// Camera clip planes, matching the projection used for 3D items
+uniform float nearClip;
+uniform float farClip;
+
+// How far to push the background away from the camera, as a fraction of the
+// scene depth range. Prevents estimation noise from wrongly occluding the
+// character (floor over feet, back wall eating the body).
+uniform float depthBias;
+
+float depthAt(vec2 uv) {
+	vec4 depthSample = texture(depthTex, uv);
+	float depthNorm = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
+	return mix(depthZMin, depthZMax, depthNorm);
+}
+
+void main() {
+	vec2 uv = Texcoord;
+	vec4 texColor = texture(tex, uv);
+
+	// Fully transparent overlay pixels must not stamp the depth buffer
+	if (texColor.a < 0.004) {
+		discard;
+	}
+
+	outColor = texColor + vec4(fadeLevel, fadeLevel, fadeLevel, 0) * texColor.a;
+
+	// 16 bit eye space depth is packed in the R (high) and G (low) channels
+	float zEye = depthAt(uv);
+	float depthNorm = (zEye - depthZMin) / max(depthZMax - depthZMin, 0.001);
+
+	// Push the scene away from the camera by a fixed fraction of the depth
+	// range. An additive bias helps uniformly at all depths - unlike a
+	// multiplicative one, it also lifts the near floor off the character's
+	// feet - so the character is only occluded by clearly closer geometry.
+	zEye = max(zEye + (depthZMax - depthZMin) * depthBias, nearClip);
+
+	// Convert eye space distance to window space depth, matching the
+	// standard perspective projection used when rendering the 3D items
+	float ndcZ = (farClip + nearClip - 2.0 * farClip / zEye * nearClip) / (farClip - nearClip);
+	gl_FragDepth = clamp(ndcZ * 0.5 + 0.5, 0.0, 1.0);
+
+	if (UBOOL_TEST(debugShowDepth)) {
+		// Visualize the depth map: near = bright, far = dark
+		outColor = vec4(vec3(1.0 - depthNorm), 1.0);
+	}
+}

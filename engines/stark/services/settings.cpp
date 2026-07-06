@@ -43,6 +43,12 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	_boolKey[kShadow] = "enable_shadows";
 	_boolKey[kHighFMV] = "play_high_resolution_videos";
 	_boolKey[kTimeSkip] = "enable_time_skip";
+	_boolKey[kHighlightHotspots] = "highlight_hotspots";
+	_boolKey[kSoftShadows] = "soft_shadows";
+	_boolKey[kDepthMaps] = "enable_depth_maps";
+	_boolKey[kAmbientMatching] = "ambient_matching";
+	_boolKey[kNormalMapping] = "enable_normal_mapping";
+	_boolKey[kDepthFog] = "enable_depth_fog";
 	_intKey[kVoice] = "speech_volume";
 	_intKey[kMusic] = "music_volume";
 	_intKey[kSfx] = "sfx_volume";
@@ -55,8 +61,50 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault(_boolKey[kShadow], true);
 	ConfMan.registerDefault(_boolKey[kHighFMV], true);
 	ConfMan.registerDefault(_boolKey[kTimeSkip], false);
+	ConfMan.registerDefault(_boolKey[kHighlightHotspots], false);
+	ConfMan.registerDefault(_boolKey[kSoftShadows], true);
+	ConfMan.registerDefault(_boolKey[kDepthMaps], true);
+	ConfMan.registerDefault(_boolKey[kAmbientMatching], true);
+	ConfMan.registerDefault(_boolKey[kNormalMapping], true);
+	ConfMan.registerDefault(_boolKey[kDepthFog], false);
+	ConfMan.registerDefault("fog_density", 45);   // percent
+
+	// Post-processing pipeline (percent-based; 100 = neutral where noted)
+	ConfMan.registerDefault("enable_post_processing", false);
+	ConfMan.registerDefault("grade_brightness", 0);    // additive, 0 = neutral
+	ConfMan.registerDefault("grade_contrast", 100);    // 100 = neutral
+	ConfMan.registerDefault("grade_saturation", 100);  // 100 = neutral
+	ConfMan.registerDefault("grade_tint_r", 100);      // 100 = neutral
+	ConfMan.registerDefault("grade_tint_g", 100);
+	ConfMan.registerDefault("grade_tint_b", 100);
+	ConfMan.registerDefault("vignette_strength", 0);
+	ConfMan.registerDefault("grain_strength", 0);
+	ConfMan.registerDefault("sharpen_strength", 0);
+
+	// Depth of field: focus on the character, soften by distance
+	ConfMan.registerDefault("enable_depth_of_field", false);
+	ConfMan.registerDefault("dof_strength", 12);   // max blur radius in texels
+	ConfMan.registerDefault("dof_range", 60);      // falloff width, % of focus distance
 	ConfMan.registerDefault(_intKey[kSaveLoadPage], 0);
 	ConfMan.registerDefault("replacement_png_premultiply_alpha", false);
+	ConfMan.registerDefault("debug_show_depth", false);
+	ConfMan.registerDefault("debug_show_normals", false);
+	ConfMan.registerDefault("scene_lighting_strength", 60);   // percent
+	ConfMan.registerDefault("marker_scale", 100);          // percent
+	ConfMan.registerDefault("marker_colorblind", false);
+	ConfMan.registerDefault("subtitle_scale", 100);        // percent
+	ConfMan.registerDefault("stark_autosave_on_travel", true);
+	ConfMan.registerDefault("texture_anisotropy", true);
+	ConfMan.registerDefault("texture_anisotropy_level", 16);
+
+	// Soft shadow quality: number of jittered passes (each redraws the mesh).
+	// 8 keeps the penumbra smooth while halving the cost of the 16-pass version,
+	// which matters a lot with the high-poly enhanced meshes.
+	ConfMan.registerDefault("shadow_passes", 8);
+
+	// Depth occlusion bias: how far the background is pushed back (percent of
+	// the scene depth range) so estimation noise doesn't eat the character.
+	ConfMan.registerDefault("depth_bias", 6);
 	ConfMan.registerDefault("ignore_font_settings", true);
 
 	// Use the FunCom logo video to check low-resolution fmv

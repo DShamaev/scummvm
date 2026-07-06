@@ -64,6 +64,9 @@ public:
 
 	void setCastShadow(bool cast) { _castsShadow = cast; }
 
+	/** Set the scene lighting tint, smoothed by the owning item */
+	void setAmbientTint(const Math::Vector3d &tint) { _ambientTint = tint; }
+
 	bool intersectRay(const Math::Ray &ray, const Math::Vector3d &position, float direction);
 	Common::Rect getBoundingRect(const Math::Vector3d &position3d, float direction) const;
 
@@ -78,9 +81,11 @@ protected:
 	uint32 _time;
 	bool _modelIsDirty;
 	bool _castsShadow;
+	Math::Vector3d _ambientTint;
 
 	Math::Matrix4 getModelMatrix(const Math::Vector3d &position, float direction) const;
 	const Gfx::Texture *resolveTexture(const Material *material) const;
+	const Gfx::Texture *resolveNormalTexture(const Material *material) const;
 };
 
 } // End of namespace Stark

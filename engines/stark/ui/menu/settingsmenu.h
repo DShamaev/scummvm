@@ -25,6 +25,7 @@
 #include "engines/stark/ui/menu/locationscreen.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/settings.h"
+#include "engines/stark/visual/text.h"
 
 namespace Stark {
 
@@ -102,13 +103,27 @@ private:
 	template<Settings::BoolSettingIndex N>
 	void flipSettingHandler();
 
+	/** Flip a plain boolean ConfMan key (for engine-added settings) */
+	template<int N>
+	void flipBoolKeyHandler();
+
 	void backHandler();
+
+	/** Build each page's widgets */
+	void buildSettingsPage();
+	void buildEnhancementsPage();
+
+	/** Switch between the two pages, rebuilding the widgets */
+	void showEnhancementsPage();
+	void showSettingsPage();
 
 private:
 	const Gfx::Color _textColorHovered = Gfx::Color(0x1E, 0x1E, 0x96);
 	const Gfx::Color _textColorDefault = Gfx::Color(0x00, 0x00, 0x00);
 
 	TestSoundManager _soundManager;
+	bool _enhancementsPage;
+	bool _pendingRebuild;
 };
 
 /**
@@ -134,6 +149,105 @@ private:
 	bool _isChecked;
 
 	bool isMouseInsideCheckbox(const Common::Point &mousePos) const;
+};
+
+/**
+ * Checkbox widget with an engine-provided label, not bound to a location render entry.
+ *
+ * Used for settings added by the engine which have no widget in the game's
+ * original settings location.
+ */
+class CustomCheckboxWidget : public StaticLocationWidget {
+public:
+	CustomCheckboxWidget(Gfx::Driver *gfx, const Common::String &text,
+	                     const Common::Point &textPosition, bool isChecked,
+	                     WidgetOnClickCallback *onClickCallback);
+
+	/** Self-managing variant: reads/writes a boolean ConfMan key directly */
+	CustomCheckboxWidget(Gfx::Driver *gfx, const Common::String &text,
+	                     const Common::Point &textPosition, const Common::String &confKey);
+	virtual ~CustomCheckboxWidget() {};
+
+	// StaticLocationWidget API
+	void render() override;
+	bool isMouseInside(const Common::Point &mousePos) const override;
+	void onClick() override;
+	void onMouseMove(const Common::Point &mousePos) override;
+	void onScreenChanged() override;
+
+private:
+	void init(const Common::String &text, const Common::Point &textPosition, bool isChecked);
+
+	const Gfx::Color _textColorHovered = Gfx::Color(0x1E, 0x1E, 0x96);
+	const Gfx::Color _textColorDefault = Gfx::Color(0x00, 0x00, 0x00);
+
+	Common::String _confKey;   // empty for the callback variant
+	VisualText _text;
+	Common::Point _textPosition;
+	Common::Point _checkboxPosition;
+	VisualImageXMG *_currentImage;
+	VisualImageXMG *_checkBoxImage[2];
+	int _checkboxWidth, _checkboxHeight;
+	bool _isChecked;
+};
+
+/**
+ * Engine-added widget that cycles an integer ConfMan setting through a set
+ * of preset values on click, showing "Label: value%".
+ */
+class CustomCycleWidget : public StaticLocationWidget {
+public:
+	CustomCycleWidget(Gfx::Driver *gfx, const Common::String &label,
+	                  const Common::Point &textPosition, const Common::String &confKey,
+	                  const Common::Array<int> &values, const Common::String &suffix);
+	virtual ~CustomCycleWidget() {};
+
+	// StaticLocationWidget API
+	void render() override;
+	bool isMouseInside(const Common::Point &mousePos) const override;
+	void onClick() override;
+	void onMouseMove(const Common::Point &mousePos) override;
+	void onScreenChanged() override;
+
+private:
+	void refreshText();
+
+	const Gfx::Color _textColorHovered = Gfx::Color(0x1E, 0x1E, 0x96);
+	const Gfx::Color _textColorDefault = Gfx::Color(0x00, 0x00, 0x00);
+
+	Gfx::Driver *_gfx;
+	VisualText _text;
+	Common::String _label;
+	Common::String _suffix;
+	Common::String _confKey;
+	Common::Point _textPosition;
+	Common::Array<int> _values;
+	bool _hovered;
+};
+
+/**
+ * A clickable text button not bound to a location render entry.
+ * Used to navigate between the settings page and the enhancements page.
+ */
+class CustomButtonWidget : public StaticLocationWidget {
+public:
+	CustomButtonWidget(Gfx::Driver *gfx, const Common::String &text,
+	                   const Common::Point &textPosition, WidgetOnClickCallback *onClickCallback);
+	virtual ~CustomButtonWidget() {};
+
+	// StaticLocationWidget API
+	void render() override;
+	bool isMouseInside(const Common::Point &mousePos) const override;
+	void onClick() override;
+	void onMouseMove(const Common::Point &mousePos) override;
+	void onScreenChanged() override;
+
+private:
+	const Gfx::Color _textColorHovered = Gfx::Color(0x1E, 0x1E, 0x96);
+	const Gfx::Color _textColorDefault = Gfx::Color(0x00, 0x00, 0x00);
+
+	VisualText _text;
+	Common::Point _textPosition;
 };
 
 /**

@@ -64,8 +64,19 @@ public:
 	 */
 	bool loadPNG(Common::SeekableReadStream *stream);
 
+	/**
+	 * Load a depth map from a PNG image
+	 *
+	 * The image contains 16-bit normalized eye-space depth packed in the
+	 * R (high) and G (low) channels, spanning the [zMin, zMax] range.
+	 */
+	bool loadDepthPNG(Common::SeekableReadStream *stream, float zMin, float zMax, float bias);
+
 	void render(const Common::Point &position, bool useOffset);
 	void render(const Common::Point &position, bool useOffset, bool unscaled);
+
+	/** Render the image stretched to an explicit width and height */
+	void renderScaledToSize(const Common::Point &position, uint width, uint height);
 
 	/** Set an offset used when rendering */
 	void setHotSpot(const Common::Point &hotspot);
@@ -96,6 +107,7 @@ private:
 	Gfx::Driver *_gfx;
 	Gfx::SurfaceRenderer *_surfaceRenderer;
 	Gfx::Bitmap *_bitmap;
+	Gfx::Bitmap *_depthBitmap;
 	Graphics::Surface *_surface;
 	Common::Point _hotspot;
 	uint _originalWidth;

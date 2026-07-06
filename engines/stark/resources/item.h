@@ -121,6 +121,18 @@ public:
 	/** List all the exit positions */
 	virtual Common::Array<Common::Point> listExitPositions();
 
+	/** An interactive hotspot: on-screen position, title and default action */
+	struct Hotspot {
+		Common::Point position;
+		Common::String title;
+		int32 defaultAction;
+
+		Hotspot() : defaultAction(-1) {}
+	};
+
+	/** List all the interactive (non-exit) hotspots of the item */
+	virtual Common::Array<Hotspot> listHotspots();
+
 protected:
 	void printData() override;
 
@@ -195,6 +207,9 @@ protected:
 
 	/** Implemented version used in FloorPositionedImageItem and ImageItem */
 	Common::Array<Common::Point> listExitPositionsImpl();
+
+	/** Implemented version used in FloorPositionedImageItem and ImageItem */
+	Common::Array<Hotspot> listHotspotsImpl();
 
 	Visual *getVisual();
 
@@ -395,6 +410,7 @@ public:
 	// Item API
 	Gfx::RenderEntry *getRenderEntry(const Common::Point &positionOffset) override;
 	Common::Array<Common::Point> listExitPositions() override;
+	Common::Array<Hotspot> listHotspots() override;
 
 	// ItemVisual API
 	void setPosition2D(const Common::Point &position) override;
@@ -454,6 +470,9 @@ public:
 protected:
 	void printData() override;
 
+	/** Update the scene lighting tint for the actor visual */
+	void updateAmbientTint(Visual *visual);
+
 	int32 _meshIndex;
 	int32 _textureNormalIndex;
 	int32 _textureFaceIndex;
@@ -462,6 +481,9 @@ protected:
 	ItemTemplate *_referencedItem;
 
 	AnimHandler *_animHandler;
+
+	Math::Vector3d _ambientTint;
+	bool _ambientTintInitialized;
 };
 
 /**
@@ -480,6 +502,7 @@ public:
 	// Item API
 	Gfx::RenderEntry *getRenderEntry(const Common::Point &positionOffset) override;
 	Common::Array<Common::Point> listExitPositions() override;
+	Common::Array<Hotspot> listHotspots() override;
 
 	// ItemVisual API
 	void setPosition2D(const Common::Point &position) override;

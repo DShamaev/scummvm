@@ -38,7 +38,10 @@ Scene::Scene(Gfx::Driver *gfx) :
 		_fadeLevel(1.0),
 		_floatOffset(0.0),
 		_shouldRenderShadows(true),
-		_maxShadowLength(0.075f) {
+		_maxShadowLength(0.075f),
+		_bgDepthZMin(0.0f),
+		_bgDepthZMax(0.0f),
+		_focusDepth(0.0f) {
 }
 
 Scene::~Scene() {
@@ -60,6 +63,11 @@ void Scene::initCamera(const Math::Vector3d &position, const Math::Vector3d &loo
 	setSwayAngle(0);
 	setFadeLevel(1.0);
 	setFloatOffset(0);
+
+	// Reset the background depth range; it is repopulated only if this
+	// location's background has a depth map
+	_bgDepthZMin = 0.0f;
+	_bgDepthZMax = 0.0f;
 }
 
 void Scene::scrollCamera(const Common::Rect &viewport) {

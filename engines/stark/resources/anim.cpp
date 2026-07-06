@@ -325,23 +325,39 @@ void AnimVideo::onAllLoaded() {
 
 		_smacker = new VisualSmacker(StarkGfx);
 
+		Common::SeekableReadStream *overrideStreamFrames = nullptr;
 		Common::SeekableReadStream *overrideStreamBink = nullptr;
 		Common::SeekableReadStream *overrideStreamSmacker = nullptr;
 		if (StarkSettings->isAssetsModEnabled() && StarkGfx->supportsModdedAssets()) {
-			overrideStreamBink = openOverrideFile(".bik");
-			if (!overrideStreamBink) {
-				overrideStreamSmacker = openOverrideFile(".smk");
+			// Prefer an HD PNG-frame pack, then a Bink or Smacker override.
+			overrideStreamFrames = openOverrideFile(".hdanim");
+			if (!overrideStreamFrames) {
+				overrideStreamBink = openOverrideFile(".bik");
+				if (!overrideStreamBink) {
+					overrideStreamSmacker = openOverrideFile(".smk");
+				}
 			}
 		}
 
 		Common::SeekableReadStream *stream = StarkArchiveLoader->getExternalFile(_smackerFile, _archiveName);
-		if (overrideStreamBink) {
+		bool loaded = false;
+		if (overrideStreamFrames) {
+			loaded = _smacker->loadFrameSequence(overrideStreamFrames);
+			if (loaded) {
+				_smacker->readOriginalSize(stream);
+			}
+		}
+		if (!loaded && overrideStreamBink) {
 			_smacker->loadBink(overrideStreamBink);
 			_smacker->readOriginalSize(stream);
-		} else if (overrideStreamSmacker) {
+			loaded = true;
+		}
+		if (!loaded && overrideStreamSmacker) {
 			_smacker->loadSmacker(overrideStreamSmacker);
 			_smacker->readOriginalSize(stream);
-		} else {
+			loaded = true;
+		}
+		if (!loaded) {
 			_smacker->loadSmacker(stream);
 		}
 

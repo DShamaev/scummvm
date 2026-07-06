@@ -73,10 +73,28 @@ public:
 	 */
 	void setSnapToGrid(bool snapToGrid);
 
+	/**
+	 * Set a depth map for the rendered surface.
+	 *
+	 * When set, renderers supporting it write per-pixel depth so 3D items
+	 * can be occluded by parts of the surface. The bitmap contains 16-bit
+	 * normalized eye-space depth packed in the R (high) and G (low) channels,
+	 * spanning the [zMin, zMax] eye-space range.
+	 */
+	void setDepthBitmap(const Bitmap *bitmap, float zMin, float zMax, float bias);
+
+	/** Per-location depth bias, or a negative value to use the global setting */
+	float getDepthBias() const { return _depthBias; }
+
 protected:
 	bool _noScalingOverride;
 	float _fadeLevel;
 	bool _snapToGrid;
+
+	const Bitmap *_depthBitmap;
+	float _depthZMin;
+	float _depthZMax;
+	float _depthBias;
 };
 
 } // End of namespace Gfx

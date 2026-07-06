@@ -24,16 +24,20 @@
 
 #include "engines/stark/gfx/faderenderer.h"
 #include "engines/stark/gfx/renderentry.h"
+#include "engines/stark/gfx/surfacerenderer.h"
 #include "engines/stark/ui/window.h"
 
 #include "common/scummsys.h"
 #include "common/rect.h"
 #include "common/array.h"
+#include "common/hashmap.h"
+#include "common/hash-str.h"
 
 namespace Stark {
 
 class ActionMenu;
 class InventoryWindow;
+class VisualText;
 
 class GameWindow : public Window {
 public:
@@ -58,6 +62,22 @@ protected:
 
 	void checkObjectAtPos(const Common::Point &pos, int16 selectedInventoryItem, int16 &singlePossibleAction, bool &isDefaultAction);
 
+	/** Draw pulsing markers over the interactive items of the location */
+	void renderHotspotMarkers();
+
+	/** (Re)build the four action-tinted marker textures from the current palette setting */
+	void buildMarkerBitmaps();
+
+	/** Build a procedural soft dot texture with the given tint */
+	Gfx::Bitmap *createMarkerBitmap(float tintR, float tintG, float tintB);
+
+	/** Get or create the cached label visual for a hotspot title */
+	VisualText *getHotspotLabel(const Common::String &title);
+
+	/** Free the cached hotspot labels */
+	void clearTextCaches();
+
+
 	ActionMenu *_actionMenu;
 	InventoryWindow *_inventory;
 
@@ -66,6 +86,11 @@ protected:
 	Common::Point _objectRelativePosition;
 
 	Gfx::FadeRenderer *_fadeRenderer;
+	Gfx::SurfaceRenderer *_surfaceRenderer;
+	Gfx::Bitmap *_hotspotMarkers[4];
+	bool _markerColorblindCache;
+
+	Common::HashMap<Common::String, VisualText *> _hotspotLabels;
 
 	VisualImageXMG *_exitArrow, *_exitArrowLeft, *_exitArrowRight;
 	int _exitLeftBoundary, _exitRightBoundary;

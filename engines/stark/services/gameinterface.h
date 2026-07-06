@@ -22,6 +22,7 @@
 #ifndef STARK_SERVICES_GAME_INTERFACE_H
 #define STARK_SERVICES_GAME_INTERFACE_H
 
+#include "engines/stark/resources/item.h"
 #include "engines/stark/resources/pattable.h"
 
 #include "common/scummsys.h"
@@ -87,6 +88,9 @@ public:
 
 	/** List all the exit positions */
 	Common::Array<Common::Point> listExitPositions();
+
+	/** List all the interactive (non-exit) hotspots of the current location */
+	Common::Array<Resources::Item::Hotspot> listHotspots();
 };
 
 } // End of namespace Stark

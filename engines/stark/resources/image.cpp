@@ -222,6 +222,12 @@ void ImageStill::initVisual() {
 		visual->load(xmgStream);
 	}
 
+	// Depth maps are independent from color replacements: an image keeping
+	// its original XMG pixels can still have a depth map
+	if (StarkSettings->isAssetsModEnabled() && StarkGfx->supportsModdedAssets()) {
+		loadDepthMapOverride(visual);
+	}
+
 	visual->setHotSpot(_hotspot);
 
 	_visual = visual;
@@ -256,6 +262,69 @@ bool ImageStill::loadPNGOverride(VisualImageXMG *visual) const {
 
 	delete pngStream;
 	return true;
+}
+
+void ImageStill::loadDepthMapOverride(VisualImageXMG *visual) const {
+	if (!_filename.baseName().hasSuffixIgnoreCase(".xmg")) {
+		return;
+	}
+
+	Common::String baseFilename = _filename.baseName();
+	baseFilename = Common::String(baseFilename.c_str(), baseFilename.size() - 4);
+
+	Common::Path depthFilePath = _filename.getParent().appendComponent(baseFilename + "-depth.png");
+	depthFilePath = StarkArchiveLoader->getExternalFilePath(depthFilePath, _archiveName);
+
+	Common::SeekableReadStream *depthStream = SearchMan.createReadStreamForMember(depthFilePath);
+	if (!depthStream) {
+		return;
+	}
+
+	// Read the eye-space depth range from the sidecar json file. An optional
+	// "bias" field (0..0.5) overrides the global depth_bias for this location;
+	// -1 means "use the global setting".
+	float zMin = 0.0f, zMax = 0.0f, bias = -1.0f;
+	bool haveRange = false;
+
+	Common::Path rangeFilePath = _filename.getParent().appendComponent(baseFilename + "-depth.json");
+	rangeFilePath = StarkArchiveLoader->getExternalFilePath(rangeFilePath, _archiveName);
+
+	Common::SeekableReadStream *rangeStream = SearchMan.createReadStreamForMember(rangeFilePath);
+	if (rangeStream) {
+		char buf[512] = {};
+		rangeStream->read(buf, MIN<uint32>(sizeof(buf) - 1, rangeStream->size()));
+
+		const char *minPos = strstr(buf, "\"zMin\"");
+		const char *maxPos = strstr(buf, "\"zMax\"");
+		if (minPos && maxPos &&
+		    sscanf(minPos, "\"zMin\": %f", &zMin) == 1 &&
+		    sscanf(maxPos, "\"zMax\": %f", &zMax) == 1 &&
+		    zMax > zMin) {
+			haveRange = true;
+		}
+
+		const char *biasPos = strstr(buf, "\"bias\"");
+		if (biasPos) {
+			sscanf(biasPos, "\"bias\": %f", &bias);
+		}
+		delete rangeStream;
+	}
+
+	if (!haveRange) {
+		warning("Depth map %s found, but its -depth.json range file is missing or invalid",
+				depthFilePath.toString(Common::Path::kNativeSeparator).c_str());
+		delete depthStream;
+		return;
+	}
+
+	if (visual->loadDepthPNG(depthStream, zMin, zMax, bias)) {
+		debugC(kDebugModding, "Loaded depth map %s (%f .. %f, bias %f)",
+				depthFilePath.toString(Common::Path::kNativeSeparator).c_str(), zMin, zMax, bias);
+	} else {
+		warning("Failed to load depth map %s", depthFilePath.toString(Common::Path::kNativeSeparator).c_str());
+	}
+
+	delete depthStream;
 }
 
 void ImageStill::printData() {

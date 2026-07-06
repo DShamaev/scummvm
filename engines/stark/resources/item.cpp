@@ -21,9 +21,14 @@
 
 #include "engines/stark/resources/item.h"
 
+#include "common/config-manager.h"
+
 #include "engines/stark/formats/xrc.h"
+#include "engines/stark/gfx/color.h"
+#include "engines/stark/gfx/driver.h"
 #include "engines/stark/gfx/renderentry.h"
 #include "engines/stark/model/animhandler.h"
+#include "engines/stark/scene.h"
 #include "engines/stark/movement/movement.h"
 #include "engines/stark/visual/actor.h"
 
@@ -177,6 +182,10 @@ void Item::saveLoadCurrent(ResourceSerializer *serializer) {
 
 Common::Array<Common::Point> Item::listExitPositions() {
 	return Common::Array<Common::Point>();
+}
+
+Common::Array<Item::Hotspot> Item::listHotspots() {
+	return Common::Array<Hotspot>();
 }
 
 ItemVisual::~ItemVisual() {
@@ -423,6 +432,36 @@ Common::Array<Common::Point> ItemVisual::listExitPositionsImpl() {
 	return positions;
 }
 
+Common::Array<Item::Hotspot> ItemVisual::listHotspotsImpl() {
+	Common::Array<Hotspot> hotspots;
+
+	if (!_enabled || !_clickable) {
+		return hotspots;
+	}
+
+	Common::Array<PATTable *> pattables = listChildrenRecursive<PATTable>();
+	Common::Point invalidPosition(-1, -1);
+
+	for (uint i = 0; i < pattables.size(); ++i) {
+		// Exits are already handled by the exit display feature
+		if (pattables[i]->getDefaultAction() == PATTable::kActionExit) continue;
+
+		Anim *anim = getAnim();
+		if (!anim) continue;
+
+		Common::Point position = anim->getHotspotPosition(i);
+		if (position != invalidPosition) {
+			Hotspot hotspot;
+			hotspot.position = position + _renderEntry->getPosition();
+			hotspot.title = getHotspotTitle(i);
+			hotspot.defaultAction = pattables[i]->getDefaultAction();
+			hotspots.push_back(hotspot);
+		}
+	}
+
+	return hotspots;
+}
+
 ItemTemplate::~ItemTemplate() {
 }
 
@@ -649,7 +688,8 @@ void LevelItemTemplate::onAllLoaded() {
 
 BonesMesh *LevelItemTemplate::findBonesMesh() {
 	if (_meshIndex == -1) {
-		return _referencedItem->findBonesMesh();
+		// The referenced item may be unresolved for inactive templates
+		return _referencedItem ? _referencedItem->findBonesMesh() : nullptr;
 	} else {
 		BonesMesh *mesh = findChildWithIndex<BonesMesh>(_meshIndex);
 		if (mesh && !StarkSettings->getBoolSetting(Settings::kHighModel)) {
@@ -859,6 +899,10 @@ Common::Array<Common::Point> FloorPositionedImageItem::listExitPositions() {
 	return listExitPositionsImpl();
 }
 
+Common::Array<Item::Hotspot> FloorPositionedImageItem::listHotspots() {
+	return listHotspotsImpl();
+}
+
 void FloorPositionedImageItem::setPosition2D(const Common::Point &position) {
 	_position = position;
 }
@@ -917,6 +961,10 @@ Common::Array<Common::Point> ImageItem::listExitPositions() {
 	return listExitPositionsImpl();
 }
 
+Common::Array<Item::Hotspot> ImageItem::listHotspots() {
+	return listHotspotsImpl();
+}
+
 ModelItem::~ModelItem() {
 	delete _animHandler;
 }
@@ -927,7 +975,9 @@ ModelItem::ModelItem(Object *parent, byte subType, uint16 index, const Common::S
 		_textureNormalIndex(-1),
 		_textureFaceIndex(-1),
 		_referencedItem(nullptr),
-		_animHandler(nullptr) {
+		_animHandler(nullptr),
+		_ambientTint(1.0f, 1.0f, 1.0f),
+		_ambientTintInitialized(false) {
 }
 
 void ModelItem::readData(Formats::XRCReadStream *stream) {
@@ -994,13 +1044,16 @@ void ModelItem::setBonesMesh(int32 index) {
 }
 
 BonesMesh *ModelItem::findBonesMesh() {
-	// Prefer retrieving the mesh from the anim hierarchy
-	BonesMesh *bonesMesh = _animHierarchy->findBonesMesh();
+	// Prefer retrieving the mesh from the anim hierarchy.
+	// Inactive or not-yet-entered items may have no hierarchy or referenced
+	// item; guard against them (relevant when enumerating every item, e.g.
+	// for the model dumper, rather than only rendering active ones).
+	BonesMesh *bonesMesh = _animHierarchy ? _animHierarchy->findBonesMesh() : nullptr;
 
 	// Otherwise, use a children mesh, or a referenced mesh
 	if (!bonesMesh) {
 		if (_meshIndex == -1) {
-			bonesMesh = _referencedItem->findBonesMesh();
+			bonesMesh = _referencedItem ? _referencedItem->findBonesMesh() : nullptr;
 		} else {
 			bonesMesh = findChildWithIndex<BonesMesh>(_meshIndex);
 			if (bonesMesh && !StarkSettings->getBoolSetting(Settings::kHighModel)) {
@@ -1070,6 +1123,8 @@ Gfx::RenderEntry *ModelItem::getRenderEntry(const Common::Point &positionOffset)
 			visual = getVisual();
 		}
 
+		updateAmbientTint(visual);
+
 		_renderEntry->setVisual(visual);
 		_renderEntry->setPosition3D(_position3D, _direction3D);
 		_renderEntry->setSortKey(getSortKey());
@@ -1078,6 +1133,44 @@ Gfx::RenderEntry *ModelItem::getRenderEntry(const Common::Point &positionOffset)
 	}
 
 	return _renderEntry;
+}
+
+void ModelItem::updateAmbientTint(Visual *visual) {
+	VisualActor *actor = visual ? visual->get<VisualActor>() : nullptr;
+	if (!actor) {
+		return;
+	}
+
+	// Match the character's ambient lighting to the scene: tint by the
+	// average background color around the character's ground position
+	Math::Vector3d target(1.0f, 1.0f, 1.0f);
+	if (StarkSettings->getBoolSetting(Settings::kAmbientMatching) && StarkGlobal->getCurrent()) {
+		Location *location = StarkGlobal->getCurrent()->getLocation();
+		Common::Point screenPos = StarkScene->convertPosition3DToGameScreenOriginal(_position3D);
+		Gfx::Color bgColor = location->getBackgroundColorAtPoint(screenPos, 12);
+
+		// Match the scene's color balance, but keep the character readable:
+		// blend the raw tint toward neutral, and floor the brightness so a
+		// dark background (a shadowed facade) can't make a character vanish.
+		float strength = CLIP(ConfMan.getInt("scene_lighting_strength"), 0, 100) / 100.0f;
+		float tr = CLIP(bgColor.r / 128.0f, 0.0f, 1.35f);
+		float tg = CLIP(bgColor.g / 128.0f, 0.0f, 1.35f);
+		float tb = CLIP(bgColor.b / 128.0f, 0.0f, 1.35f);
+		target.x() = MAX(1.0f + (tr - 1.0f) * strength, 0.72f);
+		target.y() = MAX(1.0f + (tg - 1.0f) * strength, 0.72f);
+		target.z() = MAX(1.0f + (tb - 1.0f) * strength, 0.72f);
+	}
+
+	// The smoothed value lives on the item, so animation changes swapping
+	// the renderer do not disturb it
+	if (!_ambientTintInitialized) {
+		_ambientTint = target;
+		_ambientTintInitialized = true;
+	} else {
+		_ambientTint = _ambientTint * 0.9f + target * 0.1f;
+	}
+
+	actor->setAmbientTint(_ambientTint);
 }
 
 ItemTemplate *ModelItem::getItemTemplate() const {

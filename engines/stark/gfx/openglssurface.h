@@ -57,6 +57,7 @@ private:
 
 	OpenGLSDriver *_gfx;
 	OpenGL::Shader *_shader;
+	OpenGL::Shader *_shaderDepth;
 	OpenGL::Shader *_shaderFill;
 };
 

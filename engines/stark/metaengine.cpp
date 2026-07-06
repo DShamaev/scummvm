@@ -202,6 +202,7 @@ Common::KeymapArray StarkMetaEngine::initKeymaps(const char *target) const {
 	act = new Action("DIARYMENU", _("Diary menu"));
 	act->setCustomEngineActionEvent(kActionDiaryMenu);
 	act->addDefaultInputMapping("F1");
+	act->addDefaultInputMapping("d");
 	act->addDefaultInputMapping("JOY_X");
 	gameKeyMap->addAction(act);
 
@@ -219,6 +220,7 @@ Common::KeymapArray StarkMetaEngine::initKeymaps(const char *target) const {
 	act = new Action("CONVOLOG", _("Conversation log"));
 	act->setCustomEngineActionEvent(kActionConversationLog);
 	act->addDefaultInputMapping("F4");
+	act->addDefaultInputMapping("l");
 	gameKeyMap->addAction(act);
 
 	// I18N: Opens in-game Diary. April is the female protagonist name
@@ -275,6 +277,25 @@ Common::KeymapArray StarkMetaEngine::initKeymaps(const char *target) const {
 	act->setCustomEngineActionEvent(kActionDisplayExits);
 	act->addDefaultInputMapping("x");
 	act->addDefaultInputMapping("JOY_RIGHT_STICK");
+	gameKeyMap->addAction(act);
+
+	// I18N: Enhancement - highlights interactive objects in the location
+	act = new Action("TOGGLEHOTSPOTS", _("Highlight interactive objects"));
+	act->setCustomEngineActionEvent(kActionToggleHotspots);
+	act->addDefaultInputMapping("h");
+	act->addDefaultInputMapping("JOY_LEFT_STICK");
+	gameKeyMap->addAction(act);
+
+	// I18N: Enhancement - quick save to a dedicated slot
+	act = new Action("QUICKSAVE", _("Quicksave"));
+	act->setCustomEngineActionEvent(kActionQuickSave);
+	act->addDefaultInputMapping("C+s");
+	gameKeyMap->addAction(act);
+
+	// I18N: Enhancement - quick load from the quicksave slot
+	act = new Action("QUICKLOAD", _("Quickload"));
+	act->setCustomEngineActionEvent(kActionQuickLoad);
+	act->addDefaultInputMapping("C+l");
 	gameKeyMap->addAction(act);
 
 	act = new Action("EXITGAME", _("Quit game"));

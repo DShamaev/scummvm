@@ -21,11 +21,17 @@
 
 #include "engines/stark/gfx/opengls.h"
 
+#include "common/config-manager.h"
 #include "common/system.h"
 
 #include "math/matrix4.h"
+#include "math/vector2d.h"
+#include "math/vector3d.h"
 
 #if defined(USE_OPENGL_SHADERS)
+
+#include "engines/stark/scene.h"
+#include "engines/stark/services/services.h"
 
 #include "engines/stark/gfx/openglsactor.h"
 #include "engines/stark/gfx/openglbitmap.h"
@@ -56,20 +62,42 @@ static const GLfloat fadeVertices[] = {
 	 1.0f, -1.0f,
 };
 
+// Fullscreen quad for post-processing: position (NDC) + texcoord
+static const GLfloat postVertices[] = {
+	// X      Y      U     V
+	-1.0f,  1.0f,  0.0f, 1.0f,
+	 1.0f,  1.0f,  1.0f, 1.0f,
+	-1.0f, -1.0f,  0.0f, 0.0f,
+	 1.0f, -1.0f,  1.0f, 0.0f,
+};
+
 OpenGLSDriver::OpenGLSDriver() :
 	_surfaceShader(nullptr),
+	_surfaceDepthShader(nullptr),
 	_surfaceFillShader(nullptr),
 	_actorShader(nullptr),
 	_fadeShader(nullptr),
 	_shadowShader(nullptr),
 	_surfaceVBO(0),
-	_fadeVBO(0) {
+	_fadeVBO(0),
+	_postShader(nullptr),
+	_postVBO(0),
+	_postFBO(0),
+	_postColorTex(0),
+	_postDepthRBO(0),
+	_postWidth(0),
+	_postHeight(0),
+	_postActive(false) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
 	OpenGL::Shader::freeBuffer(_surfaceVBO);
 	OpenGL::Shader::freeBuffer(_fadeVBO);
+	OpenGL::Shader::freeBuffer(_postVBO);
+	freePostResources();
+	delete _postShader;
 	delete _surfaceFillShader;
+	delete _surfaceDepthShader;
 	delete _surfaceShader;
 	delete _actorShader;
 	delete _fadeShader;
@@ -85,6 +113,10 @@ void OpenGLSDriver::init() {
 	_surfaceShader->enableVertexAttribute("position", _surfaceVBO, 2, GL_FLOAT, GL_TRUE, 2 * sizeof(float), 0);
 	_surfaceShader->enableVertexAttribute("texcoord", _surfaceVBO, 2, GL_FLOAT, GL_TRUE, 2 * sizeof(float), 0);
 
+	_surfaceDepthShader = OpenGL::Shader::fromFiles("stark_surface_depth", attributes);
+	_surfaceDepthShader->enableVertexAttribute("position", _surfaceVBO, 2, GL_FLOAT, GL_TRUE, 2 * sizeof(float), 0);
+	_surfaceDepthShader->enableVertexAttribute("texcoord", _surfaceVBO, 2, GL_FLOAT, GL_TRUE, 2 * sizeof(float), 0);
+
 	static const char* fillAttributes[] = { "position", nullptr };
 	_surfaceFillShader = OpenGL::Shader::fromFiles("stark_surface_fill", fillAttributes);
 	_surfaceFillShader->enableVertexAttribute("position", _surfaceVBO, 2, GL_FLOAT, GL_TRUE, 2 * sizeof(float), 0);
@@ -99,6 +131,12 @@ void OpenGLSDriver::init() {
 	_fadeShader = OpenGL::Shader::fromFiles("stark_fade", fadeAttributes);
 	_fadeVBO = OpenGL::Shader::createBuffer(GL_ARRAY_BUFFER, sizeof(fadeVertices), fadeVertices);
 	_fadeShader->enableVertexAttribute("position", _fadeVBO, 2, GL_FLOAT, GL_TRUE, 2 * sizeof(float), 0);
+
+	static const char* postAttributes[] = { "position", "texcoord", nullptr };
+	_postShader = OpenGL::Shader::fromFiles("stark_post", postAttributes);
+	_postVBO = OpenGL::Shader::createBuffer(GL_ARRAY_BUFFER, sizeof(postVertices), postVertices);
+	_postShader->enableVertexAttribute("position", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+	_postShader->enableVertexAttribute("texcoord", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
 }
 
 void OpenGLSDriver::setScreenViewport(bool noScaling) {
@@ -135,6 +173,116 @@ void OpenGLSDriver::clearScreen() {
 
 void OpenGLSDriver::flipBuffer() {
 	g_system->updateScreen();
+}
+
+void OpenGLSDriver::ensurePostResources(int width, int height) {
+	if (_postFBO && _postWidth == width && _postHeight == height) {
+		return;
+	}
+
+	freePostResources();
+	_postWidth = width;
+	_postHeight = height;
+
+	glGenFramebuffers(1, &_postFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, _postFBO);
+
+	glGenTextures(1, &_postColorTex);
+	glBindTexture(GL_TEXTURE_2D, _postColorTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _postColorTex, 0);
+
+	// Depth + stencil renderbuffer (not a texture): the depth-stencil texture
+	// path hangs on the macOS GL stack. This is the proven, portable setup.
+	glGenRenderbuffers(1, &_postDepthRBO);
+	glBindRenderbuffer(GL_RENDERBUFFER, _postDepthRBO);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _postDepthRBO);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, _postDepthRBO);
+
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		warning("Post-processing framebuffer incomplete, disabling");
+		freePostResources();
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void OpenGLSDriver::freePostResources() {
+	if (_postColorTex) { glDeleteTextures(1, &_postColorTex); _postColorTex = 0; }
+	if (_postDepthRBO) { glDeleteRenderbuffers(1, &_postDepthRBO); _postDepthRBO = 0; }
+	if (_postFBO)      { glDeleteFramebuffers(1, &_postFBO); _postFBO = 0; }
+	_postWidth = _postHeight = 0;
+}
+
+bool OpenGLSDriver::beginPostProcess() {
+	if (!ConfMan.getBool("enable_post_processing")) {
+		return false;
+	}
+
+	int width = g_system->getWidth();
+	int height = g_system->getHeight();
+	ensurePostResources(width, height);
+	if (!_postFBO) {
+		return false;
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, _postFBO);
+	_postActive = true;
+	return true;
+}
+
+void OpenGLSDriver::endPostProcess() {
+	if (!_postActive) {
+		return;
+	}
+	_postActive = false;
+
+	// Composite the offscreen frame to the screen through the post shader
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, g_system->getWidth(), g_system->getHeight());
+
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_BLEND);
+
+	_postShader->use();
+	_postShader->setUniform("sceneTex", 0);
+	_postShader->setUniform("texelSize", Math::Vector2d(1.0f / _postWidth, 1.0f / _postHeight));
+	_postShader->setUniform1f("time", (g_system->getMillis() % 10000) / 1000.0f);
+
+	// Color grading
+	_postShader->setUniform1f("gradeBrightness", ConfMan.getInt("grade_brightness") / 100.0f);
+	_postShader->setUniform1f("gradeContrast", ConfMan.getInt("grade_contrast") / 100.0f);
+	_postShader->setUniform1f("gradeSaturation", ConfMan.getInt("grade_saturation") / 100.0f);
+	_postShader->setUniform("gradeTint", Math::Vector3d(
+			ConfMan.getInt("grade_tint_r") / 100.0f,
+			ConfMan.getInt("grade_tint_g") / 100.0f,
+			ConfMan.getInt("grade_tint_b") / 100.0f));
+
+	// Effects
+	_postShader->setUniform1f("vignetteStrength", ConfMan.getInt("vignette_strength") / 100.0f);
+	_postShader->setUniform1f("grainStrength", ConfMan.getInt("grain_strength") / 100.0f);
+	_postShader->setUniform1f("sharpenStrength", ConfMan.getInt("sharpen_strength") / 100.0f);
+
+	// Depth of field is disabled: sampling the FBO depth attachment hangs on
+	// this GL stack. Kept as a no-op uniform until an MRT depth pass is added.
+	_postShader->setUniform1f("dofStrength", 0.0f);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, _postColorTex);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	_postShader->unbind();
+
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
 }
 
 Texture *OpenGLSDriver::createTexture() {
@@ -218,6 +366,10 @@ OpenGL::Shader *OpenGLSDriver::createActorShaderInstance() {
 
 OpenGL::Shader *OpenGLSDriver::createSurfaceShaderInstance() {
 	return _surfaceShader->clone();
+}
+
+OpenGL::Shader *OpenGLSDriver::createSurfaceDepthShaderInstance() {
+	return _surfaceDepthShader->clone();
 }
 
 OpenGL::Shader *OpenGLSDriver::createSurfaceFillShaderInstance() {

@@ -50,7 +50,13 @@ public:
 		kSpecialFX,
 		kShadow,
 		kHighFMV,
-		kTimeSkip
+		kTimeSkip,
+		kHighlightHotspots,
+		kSoftShadows,
+		kDepthMaps,
+		kAmbientMatching,
+		kNormalMapping,
+		kDepthFog
 	};
 
 	enum IntSettingIndex {
@@ -139,7 +145,7 @@ private:
 	const bool _isDemo;
 	const Common::Language _language;
 
-	const char *_boolKey[6];
+	const char *_boolKey[12];
 	const char *_intKey[4];
 };
 

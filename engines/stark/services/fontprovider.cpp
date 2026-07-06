@@ -26,6 +26,7 @@
 #include "engines/stark/gfx/driver.h"
 
 #include "common/archive.h"
+#include "common/config-manager.h"
 #include "common/formats/ini-file.h"
 
 #include "graphics/font.h"
@@ -78,6 +79,16 @@ void FontProvider::initFonts() {
 		} else {
 			warning("Unable to open 'gui.ini' to read the font settings");
 		}
+	}
+
+	// Accessibility: scale the subtitle/dialog font (kBigFont) by the
+	// subtitle_scale setting. Applied to the gui.ini value when present,
+	// or the default below.
+	int subtitleScale = CLIP<int>(ConfMan.getInt("subtitle_scale"), 100, 250);
+	uint bigFontHeight = _bigFont._originalHeight ? _bigFont._originalHeight : 19;
+	bigFontHeight = bigFontHeight * subtitleScale / 100;
+	if (subtitleScale != 100 || !_bigFont._font) {
+		_bigFont = FontHolder(this, _bigFont._name.empty() ? "Florentine Script" : _bigFont._name, bigFontHeight);
 	}
 
 	// Default fonts

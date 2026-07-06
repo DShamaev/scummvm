@@ -86,6 +86,23 @@ public:
 	void setFloatOffset(float floatOffset);
 	float getFloatOffset() const;
 
+	/** Access the camera clip planes */
+	float getNearClipPlane() const { return _nearClipPlane; }
+	float getFarClipPlane() const { return _farClipPlane; }
+
+	/**
+	 * The eye-space depth range of the current location's depth-mapped
+	 * background, set when it renders. Used by the depth fog. zMax <= 0
+	 * means the location has no depth-mapped background.
+	 */
+	void setBackgroundDepthRange(float zMin, float zMax) { _bgDepthZMin = zMin; _bgDepthZMax = zMax; }
+	float getBackgroundDepthMin() const { return _bgDepthZMin; }
+	float getBackgroundDepthMax() const { return _bgDepthZMax; }
+
+	/** Eye-space depth of the focus subject (the character), for depth of field */
+	void setFocusDepth(float depth) { _focusDepth = depth; }
+	float getFocusDepth() const { return _focusDepth; }
+
 	/** Access the maximum length of the horizontal light direction for casting shadows */
 	void setupShadows(bool enabled, float length);
 	bool shouldRenderShadows() const { return _shouldRenderShadows; }
@@ -113,6 +130,9 @@ private:
 
 	bool _shouldRenderShadows;
 	float _maxShadowLength;
+	float _bgDepthZMin;
+	float _bgDepthZMax;
+	float _focusDepth;
 };
 
 } // End of namespace Stark

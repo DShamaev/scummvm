@@ -159,6 +159,39 @@ void Diary::logSpeech(const Common::String &line, int32 characterId) {
 	}
 }
 
+void Diary::logStandaloneSpeech(const Common::String &line, int32 characterId, const Common::String &title) {
+	int32 chapter = StarkGlobal->getCurrentChapter();
+
+	// Reuse the current chapter's observations entry, or start a new one.
+	// A real interactive dialog owning the tail takes precedence, so we
+	// never splice asides into the middle of a conversation.
+	ConversationLog *target = nullptr;
+	if (!_conversationEntries.empty()) {
+		ConversationLog &last = _conversationEntries.back();
+		if (!last.dialogActive && last.chapter == chapter && last.title == title) {
+			target = &last;
+		}
+	}
+
+	if (!target) {
+		ConversationLog conversation;
+		conversation.title = title;
+		conversation.characterName = "";
+		conversation.characterId = characterId;
+		conversation.chapter = chapter;
+		conversation.dialogActive = false;
+		_conversationEntries.push_back(conversation);
+		target = &_conversationEntries.back();
+	}
+
+	ConversationLogLine logLine;
+	logLine.line = line;
+	logLine.characterId = characterId;
+	target->lines.push_back(logLine);
+
+	_hasUnreadEntries = true;
+}
+
 bool Diary::isEnabled() const {
 	return StarkGlobal->getInventory() && StarkGlobal->hasInventoryItem("Diary");
 }

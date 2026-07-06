@@ -22,6 +22,7 @@
 #ifndef CONSOLE_H_
 #define CONSOLE_H_
 
+#include "common/array.h"
 #include "gui/debugger.h"
 
 namespace Stark {
@@ -39,7 +40,24 @@ public:
 	Console();
 	virtual ~Console();
 
+	/** Advance the all-locations dump crawl, called once per game loop frame */
+	void tickDumpCrawl();
+
 private:
+	void dumpCurrentSceneData();
+	void dumpCurrentModels();
+
+	struct CrawlTarget {
+		uint16 level;
+		uint16 location;
+	};
+
+	Common::Array<CrawlTarget> _crawlQueue;
+	bool _crawlActive;
+	bool _crawlScenes;
+	bool _crawlModels;
+	int _crawlWait;
+
 	bool Cmd_DumpArchive(int argc, const char **argv);
 	bool Cmd_DumpRoot(int argc, const char **argv);
 	bool Cmd_DumpStatic(int argc, const char **argv);
@@ -47,6 +65,13 @@ private:
 	bool Cmd_DumpKnowledge(int argc, const char **argv);
 	bool Cmd_DumpLevel(int argc, const char **argv);
 	bool Cmd_DumpLocation(int argc, const char **argv);
+	bool Cmd_DumpSceneData(int argc, const char **argv);
+	bool Cmd_DepthViz(int argc, const char **argv);
+	bool Cmd_Toggle(int argc, const char **argv);
+	bool Cmd_SetInt(int argc, const char **argv);
+	bool Cmd_PostPreset(int argc, const char **argv);
+	bool Cmd_DumpModels(int argc, const char **argv);
+	bool Cmd_DumpAll(int argc, const char **argv);
 	bool Cmd_ForceScript(int argc, const char **argv);
 	bool Cmd_DecompileScript(int argc, const char **argv);
 	bool Cmd_TestDecompiler(int argc, const char** argv);

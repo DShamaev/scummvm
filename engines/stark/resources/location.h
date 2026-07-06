@@ -26,10 +26,14 @@
 #include "common/rect.h"
 #include "common/str.h"
 
+#include "engines/stark/gfx/color.h"
 #include "engines/stark/gfx/renderentry.h"
+#include "engines/stark/resources/item.h"
 #include "engines/stark/resources/object.h"
 
 namespace Stark {
+
+class VisualImageXMG;
 
 namespace Formats {
 class XRCReadStream;
@@ -148,10 +152,31 @@ public:
 	/** List all the exit positions */
 	Common::Array<Common::Point> listExitPositions();
 
+	/** List all the interactive (non-exit) hotspots of the location */
+	Common::Array<Item::Hotspot> listHotspots();
+
+	/**
+	 * Average color of the background image around a point.
+	 *
+	 * The point is in original game view coordinates. Used to match the
+	 * characters' ambient lighting with the scene. Returns pure white
+	 * when the location has no background image.
+	 */
+	Gfx::Color getBackgroundColorAtPoint(const Common::Point &point, int radius);
+
+	/** Average color near the top of the background - the scene's horizon/sky */
+	Gfx::Color getHorizonColor() { return getBackgroundColorAtPoint(Common::Point(320, 30), 40); }
+
 protected:
 	void printData() override;
 
 private:
+	static const int kTintMapWidth = 64;
+	static const int kTintMapHeight = 36;
+
+	VisualImageXMG *_backgroundVisualCache;
+	Common::Array<float> _bgTintMap;
+
 	bool scrollToSmooth(const Common::Point &position, bool followCharacter);
 	bool scrollToCharacter(ModelItem *item);
 	Common::Point getCharacterScrollPosition(ModelItem *item);

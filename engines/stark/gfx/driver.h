@@ -106,6 +106,14 @@ public:
 	 */
 	virtual FadeRenderer *createFadeRenderer() = 0;
 
+	/**
+	 * Post-processing hooks. The base implementation is a no-op (rendering
+	 * goes directly to the screen); the shader-based driver overrides these
+	 * to render into an offscreen buffer and composite through post shaders.
+	 */
+	virtual bool beginPostProcess() { return false; }
+	virtual void endPostProcess() {}
+
 	/** Checks if a screenpoint coord is within window bounds */
 	bool isPosInScreenBounds(const Common::Point &point) const;
 

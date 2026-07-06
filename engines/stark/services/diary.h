@@ -101,6 +101,15 @@ public:
 	/** Record a speech line for the previously opened dialog */
 	void logSpeech(const Common::String &line, int32 characterId);
 
+	/**
+	 * Record a one-shot speech line that is not part of an interactive dialog
+	 * (April's observations, scripted asides, ambient lines).
+	 *
+	 * These are grouped into a per-chapter "Observations" conversation entry
+	 * so they show up in the diary conversation log alongside real dialogs.
+	 */
+	void logStandaloneSpeech(const Common::String &line, int32 characterId, const Common::String &title);
+
 	/** Close the currently active dialog */
 	void closeDialog();
 

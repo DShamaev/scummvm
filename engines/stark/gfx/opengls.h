@@ -59,6 +59,7 @@ public:
 
 	OpenGL::Shader *createActorShaderInstance();
 	OpenGL::Shader *createSurfaceShaderInstance();
+	OpenGL::Shader *createSurfaceDepthShaderInstance();
 	OpenGL::Shader *createSurfaceFillShaderInstance();
 	OpenGL::Shader *createFadeShaderInstance();
 	OpenGL::Shader *createShadowShaderInstance();
@@ -67,6 +68,16 @@ public:
 	void end2DMode();
 	void set3DMode() override;
 	bool computeLightsEnabled() override;
+
+	/**
+	 * Post-processing: render the frame into an offscreen buffer, then
+	 * composite it to the screen through the post-process shader.
+	 * beginPostProcess binds the buffer; endPostProcess resolves it.
+	 * Returns false if post-processing is unavailable or disabled, in
+	 * which case rendering proceeds directly to the screen as before.
+	 */
+	bool beginPostProcess();
+	void endPostProcess();
 
 	Common::Rect getViewport() const;
 	Common::Rect getUnscaledViewport() const;
@@ -78,12 +89,26 @@ private:
 	Common::Rect _unscaledViewport;
 
 	OpenGL::Shader *_surfaceShader;
+	OpenGL::Shader *_surfaceDepthShader;
 	OpenGL::Shader *_surfaceFillShader;
 	OpenGL::Shader *_actorShader;
 	OpenGL::Shader *_fadeShader;
 	OpenGL::Shader *_shadowShader;
 	GLuint _surfaceVBO;
 	GLuint _fadeVBO;
+
+	// Post-processing offscreen buffer
+	OpenGL::Shader *_postShader;
+	GLuint _postVBO;
+	GLuint _postFBO;
+	GLuint _postColorTex;
+	GLuint _postDepthRBO;
+	int _postWidth;
+	int _postHeight;
+	bool _postActive;
+
+	void ensurePostResources(int width, int height);
+	void freePostResources();
 };
 
 } // End of namespace Gfx

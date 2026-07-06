@@ -135,6 +135,12 @@ public:
 	/** Obtain the vertex for an index */
 	Math::Vector3d getVertex(uint32 index) const;
 
+	/** Obtain the total number of vertices */
+	uint32 getNumVertices() const { return _vertices.size(); }
+
+	/** Obtain the total number of faces */
+	uint32 getNumFaces() const { return _facesCount; }
+
 	/**
 	 * Obtain the index of the face containing the point when both the floorfield
 	 * and the point are projected on a Z=0 plane.

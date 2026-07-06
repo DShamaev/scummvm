@@ -84,6 +84,7 @@ public:
 	void render();
 	void handleMouseMove(const Common::Point &pos);
 	void handleMouseUp();
+	void handleMouseWheel(bool up);
 	void handleClick();
 	void handleRightClick();
 	void handleDoubleClick();

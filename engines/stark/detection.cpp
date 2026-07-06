@@ -399,6 +399,18 @@ static const ADGameDescription gameDescriptions[] = {
 	},
 
 	// The Longest Journey
+	// iOS - v1.0.7 - variant with GOG-style x.xarc
+	{
+		"tlj", "Remastered",
+		AD_ENTRY2s("x.xarc",		"a0559457126caadab0cadac02d35f26f", 3032,
+				   "chapters.ini",	"da19240d49f714a27da2054caadc0057", 500),
+		Common::EN_ANY,
+		Common::kPlatformIOS,
+		ADGF_NO_FLAGS,
+		GUIO_NONE
+	},
+
+	// The Longest Journey
 	// Hebrew fan-made
 	{
 		"tlj", "Fanmade",

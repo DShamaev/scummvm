@@ -26,6 +26,7 @@
 #include "engines/engine.h"
 
 #include "engines/stark/services/userinterface.h"
+#include "engines/stark/stark.h"
 
 #include "engines/stark/gfx/driver.h"
 
@@ -164,6 +165,27 @@ void UserInterface::handleRightClick() {
 		_modalDialog->handleRightClick();
 	} else {
 		_currentScreen->handleRightClick();
+	}
+}
+
+void UserInterface::handleMouseWheel(bool up) {
+	if (!isInGameScreen()) {
+		return;
+	}
+
+	// Scroll whichever panel is open under the wheel
+	if (isInventoryOpen()) {
+		if (up) {
+			_gameScreen->getInventoryWindow()->scrollUp();
+		} else {
+			_gameScreen->getInventoryWindow()->scrollDown();
+		}
+	} else {
+		if (up) {
+			_gameScreen->getDialogPanel()->scrollUp();
+		} else {
+			_gameScreen->getDialogPanel()->scrollDown();
+		}
 	}
 }
 
@@ -477,6 +499,12 @@ void UserInterface::handleActions(Common::CustomEventType customType) {
 		toggleScreen(Screen::kScreenLoadMenu);
 	} else if (customType == kActionConversationLog) {
 		toggleScreen(Screen::kScreenDialog);
+	} else if (customType == kActionToggleHotspots) {
+		StarkSettings->flipSetting(Settings::kHighlightHotspots);
+	} else if (customType == kActionQuickSave) {
+		((StarkEngine *)g_engine)->quickSave();
+	} else if (customType == kActionQuickLoad) {
+		((StarkEngine *)g_engine)->quickLoad();
 	} else if (customType == kActionAprilsDiary) {
 		if (StarkDiary->isEnabled()) {
 			toggleScreen(Screen::kScreenDiaryPages);

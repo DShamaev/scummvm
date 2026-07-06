@@ -64,7 +64,9 @@ StarkEngine::StarkEngine(OSystem *syst, const ADGameDescription *gameDesc) :
 		Engine(syst),
 		_frameLimiter(nullptr),
 		_gameDescription(gameDesc),
-		_lastClickTime(0) {
+		_lastClickTime(0),
+		_lastAutosaveLevel(-1),
+		_lastAutosaveLocation(-1) {
 
 	addModsToSearchPath();
 }
@@ -166,6 +168,7 @@ void StarkEngine::mainLoop() {
 		if (StarkResourceProvider->hasLocationChangeRequest()) {
 			StarkGlobal->setNormalSpeed();
 			StarkResourceProvider->performLocationChange();
+			autosaveOnLocationChange();
 		}
 
 		StarkUserInterface->doQueuedScreenChange();
@@ -218,6 +221,10 @@ void StarkEngine::processEvents() {
 			_lastClickTime = _system->getMillis();
 		} else if (e.type == Common::EVENT_RBUTTONDOWN) {
 			StarkUserInterface->handleRightClick();
+		} else if (e.type == Common::EVENT_WHEELUP) {
+			StarkUserInterface->handleMouseWheel(true);
+		} else if (e.type == Common::EVENT_WHEELDOWN) {
+			StarkUserInterface->handleMouseWheel(false);
 		} else if (e.type == Common::EVENT_SCREEN_CHANGED) {
 			onScreenChanged();
 		}
@@ -232,6 +239,13 @@ void StarkEngine::updateDisplayScene() {
 		StarkGlobal->setMillisecondsPerGameloop(33);
 	} else {
 		StarkGlobal->setMillisecondsPerGameloop(_frameLimiter->getLastFrameDuration());
+	}
+
+	// Render the in-game world through the post-processing buffer.
+	// Menus render directly so they are not grain/vignette-affected.
+	bool postProcessing = false;
+	if (StarkUserInterface->isInGameScreen()) {
+		postProcessing = StarkGfx->beginPostProcess();
 	}
 
 	// Clear the screen
@@ -260,6 +274,11 @@ void StarkEngine::updateDisplayScene() {
 
 	// Tell the UI to render, and update implicitly, if this leads to new mouse-over events.
 	StarkUserInterface->render();
+
+	// Composite the post-processed frame to the screen
+	if (postProcessing) {
+		StarkGfx->endPostProcess();
+	}
 }
 
 static bool modsCompare(const Common::FSNode &a, const Common::FSNode &b) {
@@ -423,6 +442,55 @@ Common::Error StarkEngine::loadGameState(int slot) {
 	}
 
 	return Common::kNoError;
+}
+
+void StarkEngine::autosaveOnLocationChange() {
+	if (!ConfMan.getBool("stark_autosave_on_travel")) {
+		return;
+	}
+	if (!StarkGlobal->getCurrent() || !StarkGlobal->getCurrent()->getLocation()) {
+		return;
+	}
+
+	int level = StarkGlobal->getCurrent()->getLevel()->getIndex();
+	int location = StarkGlobal->getCurrent()->getLocation()->getIndex();
+
+	// Only autosave when the location actually changed
+	if (level == _lastAutosaveLevel && location == _lastAutosaveLocation) {
+		return;
+	}
+	_lastAutosaveLevel = level;
+	_lastAutosaveLocation = location;
+
+	if (!canSaveGameStateCurrently()) {
+		return;
+	}
+
+	Common::String desc = Common::String::format("Auto - %s",
+			StarkGlobal->getCurrent()->getLocation()->getName().c_str());
+	saveGameState(getAutosaveSlot(), desc, true);
+}
+
+void StarkEngine::quickSave() {
+	if (!canSaveGameStateCurrently()) {
+		return;
+	}
+	Common::Error result = saveGameState(_quickSaveSlot, "Quicksave", false);
+	if (result.getCode() == Common::kNoError) {
+		debug("Quicksave written");
+	}
+}
+
+void StarkEngine::quickLoad() {
+	if (!canLoadGameStateCurrently()) {
+		return;
+	}
+	Common::String filename = formatSaveName(_targetName.c_str(), _quickSaveSlot);
+	if (!_saveFileMan->listSavefiles(filename).empty()) {
+		loadGameState(_quickSaveSlot);
+	} else {
+		debug("No quicksave to load");
+	}
 }
 
 bool StarkEngine::canSaveGameStateCurrently(Common::U32String *msg) {
