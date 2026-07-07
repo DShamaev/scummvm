@@ -41,6 +41,40 @@
 namespace Stark {
 namespace Gfx {
 
+// Classify a material from its name/texture into rough surface parameters, so
+// skin and cloth stay matte while metal, armour and eyes get a real highlight,
+// instead of the whole character sharing one plasticky specular. The default
+// matches the previous uniform look, so unrecognised materials are unchanged.
+static void classifyMaterial(const Common::String &name, const Common::String &texture,
+                             float &specStrength, float &shininess, float &rim) {
+	specStrength = 0.18f;
+	shininess = 18.0f;
+	rim = 0.25f;
+
+	Common::String n = name + " " + texture;
+	n.toLowercase();
+
+	if (n.contains("eye")) {
+		specStrength = 0.55f; shininess = 60.0f;
+	} else if (n.contains("metal") || n.contains("armor") || n.contains("armour")
+			|| n.contains("steel") || n.contains("gold") || n.contains("blade")
+			|| n.contains("sword") || n.contains("helm") || n.contains("buckle")
+			|| n.contains("chrome") || n.contains("glass")) {
+		specStrength = 0.50f; shininess = 46.0f;
+	} else if (n.contains("hair")) {
+		specStrength = 0.12f; shininess = 22.0f;
+	} else if (n.contains("cloth") || n.contains("dress") || n.contains("shirt")
+			|| n.contains("pant") || n.contains("robe") || n.contains("cape")
+			|| n.contains("coat") || n.contains("jacket") || n.contains("skirt")
+			|| n.contains("trouser") || n.contains("kjole") || n.contains("cloak")) {
+		specStrength = 0.05f; shininess = 10.0f;
+	} else if (n.contains("face") || n.contains("skin") || n.contains("head")
+			|| n.contains("hand") || n.contains("arm") || n.contains("leg")
+			|| n.contains("body") || n.contains("neck") || n.contains("foot")) {
+		specStrength = 0.12f; shininess = 16.0f; rim = 0.30f;
+	}
+}
+
 OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 		VisualActor(),
 		_gfx(gfx),
@@ -103,8 +137,13 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	// ModelItem so it survives renderer recreation on animation changes
 	_shader->setUniform("ambientTint", _ambientTint);
 
+	// Soft directional shaping derived from the baked background (from the item)
+	_shader->setUniform("sceneLightDir", _sceneLightDir);
+	_shader->setUniform1f("sceneLightStrength", _sceneLightStrength);
+
 	_shader->setUniform("tex", 0);
 	_shader->setUniform("normalTex", 1);
+	_shader->setUniform("aoTex", 2);
 	_shader->setUniform("debugShowNormals", ConfMan.getBool("debug_show_normals") ? 1 : 0);
 
 	// Atmospheric fog: only where the location has a depth-mapped background
@@ -126,6 +165,8 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	_shader->setUniform1f("fogDensity", fogDensity);
 
 	bool normalMappingEnabled = StarkSettings->getBoolSetting(Settings::kNormalMapping);
+	bool materialsEnabled = !ConfMan.hasKey("enable_materials") || ConfMan.getBool("enable_materials");
+	bool aoEnabled = ConfMan.hasKey("enable_cavity_ao") && ConfMan.getBool("enable_cavity_ao");
 
 	Common::Array<Face *> faces = _model->getFaces();
 	Common::Array<Material *> mats = _model->getMaterials();
@@ -149,8 +190,27 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 			glActiveTexture(GL_TEXTURE0);
 		}
 
+		const Gfx::Texture *aoTex = aoEnabled ? resolveAOTexture(material) : nullptr;
+		if (aoTex) {
+			glActiveTexture(GL_TEXTURE2);
+			aoTex->bind();
+			glActiveTexture(GL_TEXTURE0);
+		}
+
+		// Per-material specular/rim so different substances read distinctly
+		float specStrength, shininess, rim;
+		if (materialsEnabled) {
+			classifyMaterial(material->name, material->texture, specStrength, shininess, rim);
+		} else {
+			specStrength = 0.18f; shininess = 18.0f; rim = 0.25f;
+		}
+		_shader->setUniform1f("specularStrength", specStrength);
+		_shader->setUniform1f("specularShininess", shininess);
+		_shader->setUniform1f("rimStrength", rim);
+
 		_shader->setUniform("textured", tex != nullptr);
 		_shader->setUniform("hasNormalMap", normalTex != nullptr);
+		_shader->setUniform("hasAOMap", aoTex != nullptr);
 		_shader->setUniform("color", Math::Vector3d(material->r, material->g, material->b));
 
 		GLuint ebo = _faceEBO[*face];
@@ -160,8 +220,13 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 
 	_shader->unbind();
 
-	if (_castsShadow &&
-	    StarkScene->shouldRenderShadows() &&
+	// Some scenes (e.g. the chapter intro) disable shadows in their data via
+	// castsShadow / shouldRenderShadows. force_shadows overrides both so the
+	// character still casts one - at the risk of artifacts where the scene
+	// wasn't staged with a floor at y=0.
+	bool forceShadows = ConfMan.hasKey("force_shadows") && ConfMan.getBool("force_shadows");
+	if ((_castsShadow || forceShadows) &&
+	    (StarkScene->shouldRenderShadows() || forceShadows) &&
 	    StarkSettings->getBoolSetting(Settings::kShadow)) {
 		glEnable(GL_BLEND);
 		glEnable(GL_STENCIL_TEST);
@@ -173,9 +238,14 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 		// The shadow lies on the floor plane, where depth-mapped backgrounds
 		// write nearly the same depth values. Pull the shadow slightly towards
 		// the camera so it isn't rejected by its own receiving surface, while
-		// still being clipped by genuinely closer scene geometry.
+		// still being clipped by genuinely closer scene geometry (furniture).
+		// Too much bias and the shadow also beats the furniture depth and paints
+		// over it; too little and it z-fights the floor. shadow_depth_bias tunes
+		// the units term so this can be balanced against a location's depth map.
+		float depthBias = ConfMan.hasKey("shadow_depth_bias")
+				? CLIP((int)ConfMan.getInt("shadow_depth_bias"), 0, 16) : 2;
 		glEnable(GL_POLYGON_OFFSET_FILL);
-		glPolygonOffset(-1.0f, -4.0f);
+		glPolygonOffset(-1.0f, -depthBias);
 
 		_shadowShader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
 		_shadowShader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
@@ -187,6 +257,16 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 		Math::Matrix4 mvp = projection * view * model;
 		mvp.transpose();
 		_shadowShader->setUniform("mvp", mvp);
+
+		// Fade the far tip of the shadow. casterHeight normalizes the fade to the
+		// model's height; shadow_fade (percent) controls how much the tip dissolves.
+		float casterHeight = _model->getBoundingBox().getMax().y();
+		float shadowFade = CLIP(ConfMan.hasKey("shadow_fade") ? (int)ConfMan.getInt("shadow_fade") : 70, 0, 100) / 100.0f;
+		if (casterHeight <= 0.0f) {
+			shadowFade = 0.0f; // bounding box not ready - keep the shadow uniform
+		}
+		_shadowShader->setUniform1f("casterHeight", casterHeight > 0.0f ? casterHeight : 1.0f);
+		_shadowShader->setUniform1f("shadowFade", shadowFade);
 
 		setBoneRotationArrayUniform(_shadowShader, "boneRotation");
 		setBonePositionArrayUniform(_shadowShader, "bonePosition");
@@ -450,9 +530,17 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 	}
 
 	if (hasLight) {
-		// Clip the horizontal length
+		// Clip the horizontal length. The game data caps this very short
+		// (~0.075 world units), which pins the shadow right under the feet even
+		// when a lamp is off to the side. shadow_length_scale (percent) raises
+		// the cap so the shadow can stretch out in the lamp-cast direction,
+		// up to the light geometry's own magnitude.
+		int scalePercent = ConfMan.hasKey("shadow_length_scale")
+				? CLIP((int)ConfMan.getInt("shadow_length_scale"), 100, 2000) : 600;
+		float maxLen = StarkScene->getMaxShadowLength() * (scalePercent / 100.0f);
+
 		Math::Vector2d horizontalProjection(sumDirection.x(), sumDirection.y());
-		float shadowLength = MIN(horizontalProjection.getMagnitude(), StarkScene->getMaxShadowLength());
+		float shadowLength = MIN(horizontalProjection.getMagnitude(), maxLen);
 
 		horizontalProjection.normalize();
 		horizontalProjection *= shadowLength;

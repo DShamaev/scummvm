@@ -21,6 +21,8 @@ uniform UBOOL textured;
 uniform sampler2D tex;
 uniform sampler2D normalTex;
 uniform UBOOL hasNormalMap;
+uniform sampler2D aoTex;
+uniform UBOOL hasAOMap;
 uniform UBOOL debugShowNormals;
 uniform vec3 color;
 uniform Light lights[maxLights];
@@ -29,16 +31,21 @@ uniform vec3 ambientColor;
 // Tint matching the scene lighting around the character
 uniform vec3 ambientTint;
 
+// Soft directional shaping derived from the baked background (light direction
+// in eye space and strength). sceneLightStrength == 0 disables it.
+uniform vec3 sceneLightDir;
+uniform float sceneLightStrength;
+
 // Atmospheric depth fog. fogDensity == 0 disables it.
 uniform vec3 fogColor;
 uniform float fogStart;
 uniform float fogEnd;
 uniform float fogDensity;
 
-// Specular and rim intensities
-const float specularStrength = 0.18;
-const float specularShininess = 18.0;
-const float rimStrength = 0.25;
+// Specular and rim intensities - set per material (skin, cloth, metal, eyes...)
+uniform float specularStrength;
+uniform float specularShininess;
+uniform float rimStrength;
 
 // Tangent-free normal mapping (Christian Schueler's method): reconstruct
 // the tangent frame from screen-space derivatives, so no per-vertex
@@ -80,7 +87,14 @@ void main() {
 
 	vec3 V = normalize(-EyePosition);
 
-	vec3 diffuseAcc = ambientColor;
+	// Cavity / ambient occlusion: 1.0 = open surface, darker in creases.
+	float ao = 1.0;
+	if (UBOOL_TEST(hasAOMap)) {
+		ao = texture(aoTex, Texcoord).r;
+	}
+
+	// Occlusion attenuates indirect (ambient + rim) light most strongly.
+	vec3 diffuseAcc = ambientColor * ao;
 	vec3 specularAcc = vec3(0.0);
 
 	for (int i = 0; i < maxLights; i++) {
@@ -123,11 +137,23 @@ void main() {
 		}
 	}
 
-	// Soft rim so the character reads against dark backgrounds
+	// Soft rim so the character reads against dark backgrounds (also occluded)
 	float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-	diffuseAcc += ambientColor * rim * rimStrength;
+	diffuseAcc += ambientColor * rim * rimStrength * ao;
 
 	vec3 lit = base.rgb * clamp(diffuseAcc, 0.0, 1.0) + specularAcc;
+	// A gentle share of the occlusion also darkens direct light, so creases
+	// stay defined even when lit head-on
+	lit *= mix(1.0, ao, 0.5);
+
+	// Directional shaping from the baked scene light: DARKENS only the side
+	// facing away from where the scene's light comes from. It shapes the form
+	// (character lit from the right direction) without ever adding brightness.
+	if (sceneLightStrength > 0.0) {
+		float wrap = dot(N, sceneLightDir) * 0.5 + 0.5;   // 1 toward light, 0 away
+		lit *= 1.0 - sceneLightStrength * (1.0 - wrap);
+	}
+
 	vec3 finalColor = lit * ambientTint;
 
 	// Atmospheric fog: blend toward the scene's horizon color with distance,

@@ -40,7 +40,10 @@ VisualActor::VisualActor() :
 		_modelIsDirty(true),
 		_faceTextureName(' '),
 		_castsShadow(false),
-		_ambientTint(1.0f, 1.0f, 1.0f) {
+		_ambientTint(1.0f, 1.0f, 1.0f),
+		_sceneLightDir(0.0f, 1.0f, 0.3f),
+		_sceneLightColor(1.0f, 1.0f, 1.0f),
+		_sceneLightStrength(0.0f) {
 }
 
 VisualActor::~VisualActor() {
@@ -105,6 +108,25 @@ const Gfx::Texture *VisualActor::resolveNormalTexture(const Material *material) 
 		name = Common::String(name.c_str(), dot) + "_n" + Common::String(name.c_str() + dot);
 	} else {
 		name += "_n";
+	}
+
+	return _textureSet->getTexture(name);
+}
+
+const Gfx::Texture *VisualActor::resolveAOTexture(const Material *material) const {
+	if (!_textureSet) {
+		return nullptr;
+	}
+
+	// Cavity/ambient-occlusion maps share the color texture's name with an
+	// "_ao" suffix inserted before the extension: "foo.bmp" -> "foo_ao.bmp".
+	// Shipped in the same .tm.zip as the color and normal textures.
+	Common::String name = material->texture;
+	int dot = name.findLastOf('.');
+	if (dot > 0) {
+		name = Common::String(name.c_str(), dot) + "_ao" + Common::String(name.c_str() + dot);
+	} else {
+		name += "_ao";
 	}
 
 	return _textureSet->getTexture(name);

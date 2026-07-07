@@ -45,7 +45,7 @@ public:
 
 private:
 	void dumpCurrentSceneData();
-	void dumpCurrentModels();
+	void dumpCurrentModels(bool original);
 
 	struct CrawlTarget {
 		uint16 level;
@@ -71,6 +71,7 @@ private:
 	bool Cmd_SetInt(int argc, const char **argv);
 	bool Cmd_PostPreset(int argc, const char **argv);
 	bool Cmd_DumpModels(int argc, const char **argv);
+	bool Cmd_DumpModelsOriginal(int argc, const char **argv);
 	bool Cmd_DumpAll(int argc, const char **argv);
 	bool Cmd_ForceScript(int argc, const char **argv);
 	bool Cmd_DecompileScript(int argc, const char **argv);

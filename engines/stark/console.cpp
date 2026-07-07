@@ -78,6 +78,7 @@ Console::Console() :
 	registerCmd("setInt",               WRAP_METHOD(Console, Cmd_SetInt));
 	registerCmd("postPreset",           WRAP_METHOD(Console, Cmd_PostPreset));
 	registerCmd("dumpModels",           WRAP_METHOD(Console, Cmd_DumpModels));
+	registerCmd("dumpModelsOriginal",   WRAP_METHOD(Console, Cmd_DumpModelsOriginal));
 	registerCmd("dumpAll",              WRAP_METHOD(Console, Cmd_DumpAll));
 	registerCmd("listScripts",          WRAP_METHOD(Console, Cmd_ListScripts));
 	registerCmd("enableScript",         WRAP_METHOD(Console, Cmd_EnableScript));
@@ -334,11 +335,23 @@ bool Console::Cmd_DumpModels(int argc, const char **argv) {
 		return true;
 	}
 
-	dumpCurrentModels();
+	dumpCurrentModels(false);
 	return true;
 }
 
-void Console::dumpCurrentModels() {
+bool Console::Cmd_DumpModelsOriginal(int argc, const char **argv) {
+	if (!StarkGlobal->getCurrent()) {
+		debugPrintf("Only available in-game, once a location is loaded\n");
+		return true;
+	}
+
+	// Dump the ORIGINAL meshes (ignoring any enhanced overrides), so re-dumping
+	// with the assets mod on never captures an already-subdivided mesh.
+	dumpCurrentModels(true);
+	return true;
+}
+
+void Console::dumpCurrentModels(bool original) {
 	Current *current = StarkGlobal->getCurrent();
 
 	Resources::Location *location = current->getLocation();
@@ -369,7 +382,9 @@ void Console::dumpCurrentModels() {
 			continue;
 		}
 
-		Model *model = bonesMesh->getModel();
+		// In "original" mode load a fresh copy straight from the archive, so a
+		// re-dump never captures an already-enhanced (overridden) mesh.
+		Model *model = original ? bonesMesh->loadOriginalModel() : bonesMesh->getModel();
 		if (!model) {
 			continue;
 		}
@@ -381,6 +396,7 @@ void Console::dumpCurrentModels() {
 		Common::DumpFile out;
 		if (!out.open(outPath, true)) {
 			debugPrintf("Unable to open '%s' for writing\n", outPath.toString().c_str());
+			if (original) delete model;
 			continue;
 		}
 
@@ -392,6 +408,7 @@ void Console::dumpCurrentModels() {
 		// A model with no bones cannot be skinned or dumped meaningfully
 		if (bones.empty()) {
 			debugPrintf("Skipping '%s': model has no bones\n", items[itemIndex]->getName().c_str());
+			if (original) delete model;
 			continue;
 		}
 
@@ -415,6 +432,7 @@ void Console::dumpCurrentModels() {
 		if (!valid) {
 			debugPrintf("Skipping '%s': mesh has out-of-range bone or vertex indices\n",
 					items[itemIndex]->getName().c_str());
+			if (original) delete model;
 			continue;
 		}
 
@@ -499,9 +517,11 @@ void Console::dumpCurrentModels() {
 				items[itemIndex]->getName().c_str(),
 				(int) bones.size(), (int) verts.size(), (int) faces.size(),
 				outPath.toString().c_str());
+
+		if (original) delete model;
 	}
 
-	debugPrintf("Dumped %d model(s)\n", dumpedCount);
+	debugPrintf("Dumped %d %smodel(s)\n", dumpedCount, original ? "original " : "");
 }
 
 static Common::String crawlDoneMarker(uint16 level, uint16 location) {
@@ -640,7 +660,7 @@ void Console::tickDumpCrawl() {
 		dumpCurrentSceneData();
 	}
 	if (_crawlModels) {
-		dumpCurrentModels();
+		dumpCurrentModels(true); // always dump originals, never enhanced overrides
 	}
 
 	// Mark this location as done so interrupted crawls can resume

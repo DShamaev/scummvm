@@ -23,6 +23,8 @@
 
 #include "common/config-manager.h"
 #include "common/system.h"
+#include "common/util.h"
+#include "common/events.h"
 
 #include "math/matrix4.h"
 #include "math/vector2d.h"
@@ -87,6 +89,10 @@ OpenGLSDriver::OpenGLSDriver() :
 	_postDepthRBO(0),
 	_postWidth(0),
 	_postHeight(0),
+	_renderScale(1),
+	_magTex(0),
+	_magWidth(0),
+	_magHeight(0),
 	_postActive(false) {
 }
 
@@ -95,6 +101,7 @@ OpenGLSDriver::~OpenGLSDriver() {
 	OpenGL::Shader::freeBuffer(_fadeVBO);
 	OpenGL::Shader::freeBuffer(_postVBO);
 	freePostResources();
+	if (_magTex) { glDeleteTextures(1, &_magTex); _magTex = 0; }
 	delete _postShader;
 	delete _surfaceFillShader;
 	delete _surfaceDepthShader;
@@ -148,7 +155,8 @@ void OpenGLSDriver::setScreenViewport(bool noScaling) {
 		_unscaledViewport = Common::Rect(kOriginalWidth, kOriginalHeight);
 	}
 
-	glViewport(_viewport.left, _viewport.top, _viewport.width(), _viewport.height());
+	int rs = _postActive ? _renderScale : 1;
+	glViewport(_viewport.left * rs, _viewport.top * rs, _viewport.width() * rs, _viewport.height() * rs);
 }
 
 void OpenGLSDriver::setViewport(const Common::Rect &rect) {
@@ -164,7 +172,9 @@ void OpenGLSDriver::setViewport(const Common::Rect &rect) {
 
 	_unscaledViewport = rect;
 
-	glViewport(_viewport.left, g_system->getHeight() - _viewport.bottom, _viewport.width(), _viewport.height());
+	int rs = _postActive ? _renderScale : 1;
+	glViewport(_viewport.left * rs, (g_system->getHeight() - _viewport.bottom) * rs,
+	           _viewport.width() * rs, _viewport.height() * rs);
 }
 
 void OpenGLSDriver::clearScreen() {
@@ -224,14 +234,19 @@ bool OpenGLSDriver::beginPostProcess() {
 		return false;
 	}
 
-	int width = g_system->getWidth();
-	int height = g_system->getHeight();
+	// Supersample the in-game frame: render into an FBO larger than the screen
+	// so a magnified region resolves real detail rather than enlarged pixels.
+	_renderScale = CLIP(ConfMan.hasKey("render_scale") ? ConfMan.getInt("render_scale") : 1, 1, 3);
+	int width = g_system->getWidth() * _renderScale;
+	int height = g_system->getHeight() * _renderScale;
 	ensurePostResources(width, height);
 	if (!_postFBO) {
+		_renderScale = 1;
 		return false;
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, _postFBO);
+	glViewport(0, 0, width, height);
 	_postActive = true;
 	return true;
 }
@@ -254,6 +269,17 @@ void OpenGLSDriver::endPostProcess() {
 	_postShader->setUniform("sceneTex", 0);
 	_postShader->setUniform("texelSize", Math::Vector2d(1.0f / _postWidth, 1.0f / _postHeight));
 	_postShader->setUniform1f("time", (g_system->getMillis() % 10000) / 1000.0f);
+
+	// Detail magnifier: zoom into the (supersampled) frame around the cursor so
+	// fine geometry - e.g. skinning spikes - can be inspected. 100 = off.
+	float magnify = CLIP(ConfMan.hasKey("magnify") ? ConfMan.getInt("magnify") : 100, 100, 800) / 100.0f;
+	_postShader->setUniform1f("magnify", magnify);
+
+	// Zoom centre follows the mouse cursor (UV, y flipped to texture space).
+	Common::Point mouse = g_system->getEventManager()->getMousePos();
+	float cx = CLIP((float)mouse.x / (float)g_system->getWidth(), 0.0f, 1.0f);
+	float cy = 1.0f - CLIP((float)mouse.y / (float)g_system->getHeight(), 0.0f, 1.0f);
+	_postShader->setUniform("magnifyCenter", Math::Vector2d(cx, cy));
 
 	// Color grading
 	_postShader->setUniform1f("gradeBrightness", ConfMan.getInt("grade_brightness") / 100.0f);
@@ -279,6 +305,73 @@ void OpenGLSDriver::endPostProcess() {
 
 	glBindTexture(GL_TEXTURE_2D, 0);
 
+	_postShader->unbind();
+
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+}
+
+void OpenGLSDriver::renderMagnifier() {
+	int magnifyPercent = ConfMan.hasKey("magnify") ? ConfMan.getInt("magnify") : 100;
+	if (magnifyPercent <= 100) {
+		return;
+	}
+	float magnify = CLIP(magnifyPercent, 100, 800) / 100.0f;
+
+	int w = g_system->getWidth();
+	int h = g_system->getHeight();
+
+	// Capture texture sized to the screen (recreated only when the size changes)
+	if (!_magTex || _magWidth != w || _magHeight != h) {
+		if (_magTex) {
+			glDeleteTextures(1, &_magTex);
+		}
+		glGenTextures(1, &_magTex);
+		glBindTexture(GL_TEXTURE_2D, _magTex);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		_magWidth = w;
+		_magHeight = h;
+	}
+
+	// Copy the finished frame from the back buffer into the texture. This never
+	// binds an FBO, so it avoids the fragile render-to-texture path.
+	glBindTexture(GL_TEXTURE_2D, _magTex);
+	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
+
+	glViewport(0, 0, w, h);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_BLEND);
+
+	_postShader->use();
+	_postShader->setUniform("sceneTex", 0);
+	_postShader->setUniform("texelSize", Math::Vector2d(1.0f / w, 1.0f / h));
+	_postShader->setUniform1f("time", 0.0f);
+	_postShader->setUniform1f("magnify", magnify);
+
+	Common::Point mouse = g_system->getEventManager()->getMousePos();
+	float cx = CLIP((float)mouse.x / (float)w, 0.0f, 1.0f);
+	float cy = 1.0f - CLIP((float)mouse.y / (float)h, 0.0f, 1.0f);
+	_postShader->setUniform("magnifyCenter", Math::Vector2d(cx, cy));
+
+	// Neutral grade / no effects: the magnifier only zooms.
+	_postShader->setUniform1f("gradeBrightness", 0.0f);
+	_postShader->setUniform1f("gradeContrast", 1.0f);
+	_postShader->setUniform1f("gradeSaturation", 1.0f);
+	_postShader->setUniform("gradeTint", Math::Vector3d(1.0f, 1.0f, 1.0f));
+	_postShader->setUniform1f("vignetteStrength", 0.0f);
+	_postShader->setUniform1f("grainStrength", 0.0f);
+	_postShader->setUniform1f("sharpenStrength", 0.0f);
+	_postShader->setUniform1f("dofStrength", 0.0f);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, _magTex);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
 	_postShader->unbind();
 
 	glEnable(GL_DEPTH_TEST);

@@ -1,7 +1,17 @@
 OUTPUT
 
+in float shadowT;
+
 uniform float shadowAlpha;
+// 0 = no fade (uniform darkness), 1 = fully fade out at the far tip. Softens
+// long shadows so their far end (which can't be occluded by the 2D background)
+// dissolves instead of painting flatly across furniture.
+uniform float shadowFade;
 
 void main() {
-	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha);
+	// shadowT is horizontal travel in caster-height units (~0..0.5 for typical
+	// long shadows). Scale so a long shadow's tip approaches full fade while a
+	// short shadow (small travel) stays essentially solid.
+	float fade = 1.0 - clamp(shadowT * 2.5, 0.0, 1.0) * shadowFade;
+	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * fade);
 }

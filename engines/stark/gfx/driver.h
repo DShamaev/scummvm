@@ -114,6 +114,13 @@ public:
 	virtual bool beginPostProcess() { return false; }
 	virtual void endPostProcess() {}
 
+	/**
+	 * Detail magnifier: when the 'magnify' setting is > 100, copy the finished
+	 * frame and redraw it zoomed around the cursor. Independent of the post
+	 * buffer so it works even where post-processing is disabled/unstable.
+	 */
+	virtual void renderMagnifier() {}
+
 	/** Checks if a screenpoint coord is within window bounds */
 	bool isPosInScreenBounds(const Common::Point &point) const;
 

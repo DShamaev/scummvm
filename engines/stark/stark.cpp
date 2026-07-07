@@ -45,6 +45,7 @@
 
 #include "audio/mixer.h"
 #include "common/config-manager.h"
+#include "common/util.h"
 #include "common/debug-channels.h"
 #include "common/events.h"
 #include "common/fs.h"
@@ -199,6 +200,26 @@ void StarkEngine::processEvents() {
 				continue;
 			}
 
+			// Detail-magnifier zoom: '[' out, ']' in, '\' reset. Auto-enables the
+			// supersampled post buffer so pressing ']' just works. Config
+			// (render_scale, magnify) can still be set from the console.
+			if (e.type == Common::EVENT_KEYDOWN
+					&& (e.kbd.keycode == Common::KEYCODE_LEFTBRACKET
+					    || e.kbd.keycode == Common::KEYCODE_RIGHTBRACKET
+					    || e.kbd.keycode == Common::KEYCODE_BACKSLASH)) {
+				int m = ConfMan.hasKey("magnify") ? ConfMan.getInt("magnify") : 100;
+				if (e.kbd.keycode == Common::KEYCODE_BACKSLASH) {
+					m = 100;
+				} else {
+					m = CLIP(m + (e.kbd.keycode == Common::KEYCODE_RIGHTBRACKET ? 50 : -50), 100, 800);
+				}
+				ConfMan.setInt("magnify", m);
+				// The magnifier copies the finished frame and redraws it zoomed;
+				// it does NOT use the post-processing FBO (that path is fragile
+				// on the macOS GL stack), so nothing else needs enabling here.
+				continue;
+			}
+
 			if (e.customType == kActionPause) {
 				if (StarkUserInterface->isInGameScreen()) {
 					_gamePauseToken = pauseEngine();
@@ -279,6 +300,9 @@ void StarkEngine::updateDisplayScene() {
 	if (postProcessing) {
 		StarkGfx->endPostProcess();
 	}
+
+	// Detail magnifier overlay (no-op unless the 'magnify' setting is active)
+	StarkGfx->renderMagnifier();
 }
 
 static bool modsCompare(const Common::FSNode &a, const Common::FSNode &b) {

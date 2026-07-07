@@ -11,6 +11,12 @@ uniform vec4 boneRotation[maxBones];
 uniform vec3 bonePosition[maxBones];
 uniform vec3 lightDirection;
 
+// Height of the tallest vertex, so the shadow can fade toward its far tip
+// (which comes from the top of the caster projecting furthest away).
+uniform float casterHeight;
+
+out float shadowT;
+
 vec3 qrot(vec4 q, vec3 v) {
 	return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 }
@@ -22,6 +28,14 @@ void main() {
 
 	// Project the modelPosition to the xz plane
 	vec3 shadowPosition = modelPosition + lightDirection * (-modelPosition.y / lightDirection.y);
+
+	// How far this point's shadow travels from directly beneath it, in units of
+	// caster height. Near zero for short (overhead) shadows - so the whole
+	// silhouette stays solid - and large only for long, low-angle shadows, whose
+	// far tip then fades. Keyed on travel distance, NOT body height, so a short
+	// shadow no longer loses everything above the legs.
+	vec2 shadowOffset = lightDirection.xz * (-modelPosition.y / lightDirection.y);
+	shadowT = length(shadowOffset) / max(casterHeight, 0.001);
 
 	// In case precision problem
 	shadowPosition.y = 0.0;

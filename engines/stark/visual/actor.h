@@ -67,6 +67,13 @@ public:
 	/** Set the scene lighting tint, smoothed by the owning item */
 	void setAmbientTint(const Math::Vector3d &tint) { _ambientTint = tint; }
 
+	/** Set a soft key light derived from the baked background (eye-space dir) */
+	void setSceneLight(const Math::Vector3d &dir, const Math::Vector3d &color, float strength) {
+		_sceneLightDir = dir;
+		_sceneLightColor = color;
+		_sceneLightStrength = strength;
+	}
+
 	bool intersectRay(const Math::Ray &ray, const Math::Vector3d &position, float direction);
 	Common::Rect getBoundingRect(const Math::Vector3d &position3d, float direction) const;
 
@@ -82,10 +89,14 @@ protected:
 	bool _modelIsDirty;
 	bool _castsShadow;
 	Math::Vector3d _ambientTint;
+	Math::Vector3d _sceneLightDir;
+	Math::Vector3d _sceneLightColor;
+	float _sceneLightStrength;
 
 	Math::Matrix4 getModelMatrix(const Math::Vector3d &position, float direction) const;
 	const Gfx::Texture *resolveTexture(const Material *material) const;
 	const Gfx::Texture *resolveNormalTexture(const Material *material) const;
+	const Gfx::Texture *resolveAOTexture(const Material *material) const;
 };
 
 } // End of namespace Stark

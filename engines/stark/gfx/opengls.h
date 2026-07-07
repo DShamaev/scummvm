@@ -78,6 +78,7 @@ public:
 	 */
 	bool beginPostProcess();
 	void endPostProcess();
+	void renderMagnifier() override;
 
 	Common::Rect getViewport() const;
 	Common::Rect getUnscaledViewport() const;
@@ -106,6 +107,12 @@ private:
 	int _postWidth;
 	int _postHeight;
 	bool _postActive;
+	int _renderScale;   // supersample factor for the in-game FBO (1 = off)
+
+	// Detail magnifier (framebuffer copy, independent of the post FBO)
+	GLuint _magTex;
+	int _magWidth;
+	int _magHeight;
 
 	void ensurePostResources(int width, int height);
 	void freePostResources();

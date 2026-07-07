@@ -51,8 +51,15 @@ public:
 	void readData(Formats::XRCReadStream *stream) override;
 	void onPostRead() override;
 
-	/** Obtain the mesh object */
+	/** Obtain the mesh object (may be a modded replacement if the mod is on) */
 	Model *getModel();
+
+	/**
+	 * Load a fresh copy of the ORIGINAL mesh straight from the game archive,
+	 * ignoring any replacement override. Caller owns the returned Model. Used by
+	 * the model dumper so re-dumping never captures an already-enhanced mesh.
+	 */
+	Model *loadOriginalModel() const;
 
 	/** Get the mesh file name inside the archive */
 	const Common::Path &getFilename() const { return _filename; }

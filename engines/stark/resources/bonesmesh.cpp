@@ -76,6 +76,17 @@ Model *BonesMesh::getModel() {
 	return _model;
 }
 
+Model *BonesMesh::loadOriginalModel() const {
+	ArchiveReadStream *stream = StarkArchiveLoader->getFile(_filename, _archiveName);
+	if (!stream) {
+		return nullptr;
+	}
+	Model *model = new Model();
+	model->readFromStream(stream);
+	delete stream;
+	return model;
+}
+
 void BonesMesh::printData() {
 	debug("filename: %s", _filename.toString().c_str());
 }

@@ -1171,6 +1171,42 @@ void ModelItem::updateAmbientTint(Visual *visual) {
 	}
 
 	actor->setAmbientTint(_ambientTint);
+
+	// Directional key light shaped by the baked background: sample a ring around
+	// the character and push a soft key toward the brighter side, so the scene's
+	// own lighting direction shapes the character instead of a flat tint.
+	float dirStrength = CLIP(ConfMan.hasKey("scene_directional_strength")
+			? (int)ConfMan.getInt("scene_directional_strength") : 0, 0, 100) / 100.0f;
+	Math::Vector3d lightDir(0.0f, 1.0f, 0.35f);
+	Math::Vector3d lightColor(1.0f, 1.0f, 1.0f);
+	if (dirStrength > 0.0f && StarkGlobal->getCurrent()) {
+		Location *location = StarkGlobal->getCurrent()->getLocation();
+		Common::Point c = StarkScene->convertPosition3DToGameScreenOriginal(_position3D);
+		c.y -= 80; // sample around mid-body rather than the feet
+		const int r = 60;
+		Gfx::Color cl = location->getBackgroundColorAtPoint(Common::Point(c.x - r, c.y), 10);
+		Gfx::Color cr = location->getBackgroundColorAtPoint(Common::Point(c.x + r, c.y), 10);
+		Gfx::Color cu = location->getBackgroundColorAtPoint(Common::Point(c.x, c.y - r), 10);
+		Gfx::Color cd = location->getBackgroundColorAtPoint(Common::Point(c.x, c.y + r), 10);
+		float lumL = (0.299f * cl.r + 0.587f * cl.g + 0.114f * cl.b) / 255.0f;
+		float lumR = (0.299f * cr.r + 0.587f * cr.g + 0.114f * cr.b) / 255.0f;
+		float lumU = (0.299f * cu.r + 0.587f * cu.g + 0.114f * cu.b) / 255.0f;
+		float lumD = (0.299f * cd.r + 0.587f * cd.g + 0.114f * cd.b) / 255.0f;
+
+		// Screen axes map directly to the character's eye space (x right, y up).
+		lightDir = Math::Vector3d(lumR - lumL, lumU - lumD, 0.35f);
+		if (lightDir.getMagnitude() < 0.01f) {
+			lightDir = Math::Vector3d(0.0f, 1.0f, 0.35f);
+		}
+		lightDir.normalize();
+
+		Gfx::Color cc = location->getBackgroundColorAtPoint(c, 12);
+		float m = MAX(cc.r, MAX(cc.g, cc.b));
+		if (m > 0) {
+			lightColor = Math::Vector3d(cc.r / m, cc.g / m, cc.b / m);
+		}
+	}
+	actor->setSceneLight(lightDir, lightColor, dirStrength);
 }
 
 ItemTemplate *ModelItem::getItemTemplate() const {
