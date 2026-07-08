@@ -1,0 +1,125 @@
+# Trimmed build for TLJ-remaster playtesting.
+#
+# Produces ready-to-run ScummVM builds (Stark engine only) for Windows and macOS
+# and uploads them as downloadable artifacts. Runs on demand (Actions -> Run
+# workflow) or when you push a tag like v0.1.
+#
+# The build contains ONLY the GPLv3 engine - no game data. Testers supply their
+# own copy of The Longest Journey plus your privately-shared enhancement overlay.
+#
+# If create_project rejects the Stark-only flags on your checkout, swap
+# "--disable-all-engines --enable-engine=stark" for "--enable-all-engines".
+name: Playtest Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    env:
+      CONFIGURATION: Release
+      PLATFORM: x64
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/.github/vcpkg-ports
+      GIT_VCPKG_COMMIT: ef7dbf94b9198bc58f45951adcf1f041fcbc5ea0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup nasm
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install vcpkg
+        uses: lukka/run-vcpkg@v11
+        id: runvcpkg
+        with:
+          vcpkgGitCommitId: ${{ env.GIT_VCPKG_COMMIT }}
+
+      - name: Integrate vcpkg
+        run: ${{ steps.runvcpkg.outputs.RUNVCPKG_VCPKG_ROOT_OUT }}/vcpkg integrate install
+
+      - name: Build create_project
+        run: |
+          cd devtools/create_project/cmake
+          cmake .
+          cmake --build . -j 2
+
+      - name: Generate MSVC project (Stark engine only)
+        run: |
+          mkdir build-scummvm
+          cd build-scummvm
+          ../devtools/create_project/cmake/Debug/create_project.exe .. --msvc --vcpkg --disable-all-engines --enable-engine=stark
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install vcpkg packages
+        run: vcpkg install
+
+      - name: Build ScummVM
+        run: |
+          cd build-scummvm
+          msbuild scummvm.sln /m /p:VcpkgEnableManifest=true /p:BuildInParallel=true /p:Configuration=${{ env.CONFIGURATION }} /p:PreferredToolArchitecture=x64 /p:Platform=${{ env.PLATFORM }} /v:minimal
+
+      - name: Assemble runnable folder
+        shell: pwsh
+        run: |
+          $out = "TLJ-Remaster-Windows"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "build-scummvm/${{ env.CONFIGURATION }}${{ env.PLATFORM }}/scummvm.exe" $out
+          Copy-Item "${{ env.VCPKG_INSTALLED_DIR }}/x64-windows/bin/*.dll" $out
+          Copy-Item "gui/themes/*.zip" $out
+          New-Item -ItemType Directory -Force -Path "$out/extra" | Out-Null
+          Copy-Item "dists/engine-data/*" "$out/extra" -Recurse
+          Copy-Item "dists/networking/wwwroot.zip" "$out/extra"
+          Copy-Item "dists/pred.dic" "$out/extra"
+          Copy-Item "COPYING" $out
+          Copy-Item "AUTHORS" $out -ErrorAction SilentlyContinue
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLJ-Remaster-Windows-x64
+          path: TLJ-Remaster-Windows
+
+  macos:
+    name: macOS
+    runs-on: macos-13
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install sdl2 sdl2_net freetype libpng libogg libvorbis flac \
+            faad2 libmad a52dec fluid-synth jpeg giflib libvpx libmpeg2 fribidi
+
+      - name: Configure (Stark engine only)
+        run: ./configure --disable-all-engines --enable-engine=stark
+
+      - name: Build
+        run: make -j3
+
+      - name: Bundle app
+        run: make bundle
+
+      - name: Zip app
+        run: zip -ry TLJ-Remaster-macOS.zip ScummVM.app
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLJ-Remaster-macOS
+          path: TLJ-Remaster-macOS.zip
