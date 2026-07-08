@@ -54,6 +54,8 @@ public:
 private:
 	Math::Vector2d normalizeOriginalCoordinates(int x, int y) const;
 	Math::Vector2d normalizeCurrentCoordinates(int x, int y) const;
+	/** Destination point in normalized coordinates, including the sub-unit vertex offset */
+	Math::Vector2d offsetVertex(const Common::Point &dest) const;
 
 	OpenGLSDriver *_gfx;
 	OpenGL::Shader *_shader;

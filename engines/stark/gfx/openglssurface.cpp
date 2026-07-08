@@ -67,7 +67,7 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	shader->use();
 	shader->setUniform1f("fadeLevel", _fadeLevel);
 	shader->setUniform("snapToGrid", _snapToGrid ? 1 : 0);
-	shader->setUniform("verOffsetXY", normalizeOriginalCoordinates(dest.x, dest.y));
+	shader->setUniform("verOffsetXY", offsetVertex(dest));
 	if (_noScalingOverride) {
 		shader->setUniform("verSizeWH", normalizeCurrentCoordinates(width, height));
 	} else {
@@ -150,6 +150,12 @@ void OpenGLSSurfaceRenderer::fill(const Color &color, const Common::Point &dest,
 Math::Vector2d OpenGLSSurfaceRenderer::normalizeOriginalCoordinates(int x, int y) const {
 	Common::Rect viewport = _gfx->getUnscaledViewport();
 	return Math::Vector2d(x / (float)viewport.width(), y / (float)viewport.height());
+}
+
+Math::Vector2d OpenGLSSurfaceRenderer::offsetVertex(const Common::Point &dest) const {
+	Common::Rect viewport = _gfx->getUnscaledViewport();
+	return Math::Vector2d((dest.x + _vertexOffsetX) / (float)viewport.width(),
+	                      (dest.y + _vertexOffsetY) / (float)viewport.height());
 }
 
 Math::Vector2d OpenGLSSurfaceRenderer::normalizeCurrentCoordinates(int x, int y) const {

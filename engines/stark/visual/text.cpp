@@ -48,7 +48,8 @@ VisualText::VisualText(Gfx::Driver *gfx) :
 		_targetWidth(600),
 		_targetHeight(600),
 		_fontType(FontProvider::kBigFont),
-		_fontCustomIndex(-1) {
+		_fontCustomIndex(-1),
+		_codePage(Common::kCodePageInvalid) {
 	_surfaceRenderer = _gfx->createSurfaceRenderer();
 	_surfaceRenderer->setNoScalingOverride(true);
 	_surfaceRenderer->setSnapToGrid(true);
@@ -64,6 +65,15 @@ Common::Rect VisualText::getRect() {
 		createBitmap();
 	}
 	return _originalRect;
+}
+
+int VisualText::getRenderedHeight() {
+	if (!_bitmap) {
+		createBitmap();
+	}
+	// The bitmap is sized in screen pixels (the font is pre-scaled), so convert
+	// back to original panel units to compare against panel-space coordinates.
+	return StarkGfx->scaleWidthCurrentToOriginal(_bitmap->height());
 }
 
 void VisualText::setText(const Common::String &text) {
@@ -117,6 +127,13 @@ void VisualText::setFont(FontProvider::FontType type, int32 customFontIndex) {
 		freeBitmap();
 		_fontType = type;
 		_fontCustomIndex = customFontIndex;
+	}
+}
+
+void VisualText::setCodePage(Common::CodePage codePage) {
+	if (codePage != _codePage) {
+		freeBitmap();
+		_codePage = codePage;
 	}
 }
 
@@ -238,7 +255,8 @@ static void blendWithColor(Graphics::Surface *source, const Gfx::Color &color) {
 }
 
 void VisualText::createBitmap() {
-	Common::CodePage codePage = StarkSettings->getTextCodePage();
+	Common::CodePage codePage = (_codePage != Common::kCodePageInvalid) ? _codePage
+			: StarkSettings->getTextCodePage();
 	Common::U32String unicodeText = Common::convertToU32String(_text.c_str(), codePage);
 
 	// Get the font and required metrics
@@ -320,6 +338,16 @@ void VisualText::render(const Common::Point &position) {
 	}
 
 	_surfaceRenderer->render(_bitmap, position);
+}
+
+void VisualText::render(const Common::Point &position, float subPixelYOffset) {
+	if (!_bitmap) {
+		createBitmap();
+	}
+
+	_surfaceRenderer->setVertexOffset(0.0f, subPixelYOffset);
+	render(position);
+	_surfaceRenderer->setVertexOffset(0.0f, 0.0f);
 }
 
 void VisualText::reset() {

@@ -46,7 +46,8 @@ public:
 	enum FontType {
 		kSmallFont,
 		kBigFont,
-		kCustomFont
+		kCustomFont,
+		kSubtitleFont ///< subtitle text; a language pack's font when set, else kBigFont
 	};
 
 	/**
@@ -62,6 +63,16 @@ public:
 
 	/** Load all the fonts to memory */
 	void initFonts();
+
+	/**
+	 * Load a subtitle font supplied by a language pack.
+	 *
+	 * fontFile is a TrueType file searched for in the "fonts" and "loc" folders;
+	 * pointSize is the base (unscaled) height, or 0 to reuse the big font's size.
+	 * An empty fontFile (or a file that fails to load) clears the override, so
+	 * subtitles fall back to the regular big font.
+	 */
+	void setSubtitleFont(const Common::String &fontFile, uint32 pointSize);
 
 private:
 	struct FontHolder {
@@ -83,6 +94,7 @@ private:
 	FontHolder _smallFont;
 	FontHolder _bigFont;
 	FontHolder _customFonts[8];
+	FontHolder _subtitleFont;    ///< optional language-pack font, empty when unused
 
 	Common::StringMap _ttfFileMap;
 };

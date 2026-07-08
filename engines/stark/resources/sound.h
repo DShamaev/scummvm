@@ -75,6 +75,9 @@ public:
 	/** Is the sound playing */
 	bool isPlaying();
 
+	/** Playback position in milliseconds, or 0 if not currently playing */
+	uint32 getElapsedTime();
+
 	/** Stop the sound */
 	void stop();
 

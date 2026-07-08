@@ -49,6 +49,7 @@ class Settings;
 class StateProvider;
 class GameChapter;
 class GameMessage;
+class LocalizationProvider;
 
 /**
  * Public services available as a singleton
@@ -72,6 +73,7 @@ public:
 		gameChapter = nullptr;
 		gameMessage = nullptr;
 		stateProvider = nullptr;
+		localizationProvider = nullptr;
 	}
 
 	ArchiveLoader *archiveLoader;
@@ -90,6 +92,7 @@ public:
 	GameChapter *gameChapter;
 	GameMessage *gameMessage;
 	StateProvider *stateProvider;
+	LocalizationProvider *localizationProvider;
 };
 
 /** Shortcuts for accessing the services. */
@@ -109,6 +112,7 @@ public:
 #define StarkGameChapter        StarkServices::instance().gameChapter
 #define StarkGameMessage        StarkServices::instance().gameMessage
 #define StarkStateProvider      StarkServices::instance().stateProvider
+#define StarkLocalization       StarkServices::instance().localizationProvider
 
 } // End of namespace Stark
 

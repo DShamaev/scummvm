@@ -23,11 +23,14 @@
 
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/settings.h"
+#include "engines/stark/services/localization.h"
 #include "engines/stark/gfx/driver.h"
 
 #include "common/archive.h"
 #include "common/config-manager.h"
+#include "common/fs.h"
 #include "common/formats/ini-file.h"
+#include "common/util.h"
 
 #include "graphics/font.h"
 #include "graphics/fontman.h"
@@ -102,6 +105,12 @@ void FontProvider::initFonts() {
 	if (!_customFonts[5]._font) _customFonts[5] = FontHolder(this, "Bradley Hand ITC", 16);
 	if (!_customFonts[6]._font) _customFonts[6] = FontHolder(this, "Bradley Hand ITC", 15);
 	if (!_customFonts[7]._font) _customFonts[7] = FontHolder(this, "Florentine Script", 13);
+
+	// Apply the selected language pack's subtitle font (a no-op that clears the
+	// override when the original text or a font-less pack is selected).
+	if (StarkLocalization) {
+		setSubtitleFont(StarkLocalization->getActiveFontFile(), StarkLocalization->getActiveFontSize());
+	}
 }
 
 void FontProvider::readFontEntry(const Common::INIFile *gui, FontHolder &holder, const char *nameKey, const char *sizeKey) {
@@ -153,11 +162,66 @@ FontProvider::FontHolder::FontHolder(FontProvider *fontProvider, const Common::S
 	}
 }
 
+// Open a language-pack font by name, checking the usual data folders.
+static Common::SeekableReadStream *openSubtitleFontFile(const Common::String &file) {
+	const char *prefixes[] = { "fonts/", "loc/", "" };
+	for (uint i = 0; i < ARRAYSIZE(prefixes); i++) {
+		Common::SeekableReadStream *s =
+				SearchMan.createReadStreamForMember(Common::Path(Common::String(prefixes[i]) + file));
+		if (s) {
+			return s;
+		}
+	}
+	Common::FSNode node = Common::FSNode(ConfMan.getPath("path")).getChild("loc").getChild(file);
+	if (node.exists()) {
+		return node.createReadStream();
+	}
+	return nullptr;
+}
+
+void FontProvider::setSubtitleFont(const Common::String &fontFile, uint32 pointSize) {
+	_subtitleFont = FontHolder();
+	if (fontFile.empty()) {
+		return; // no pack font: getFontHolder falls back to the big font
+	}
+
+	int subtitleScale = CLIP<int>(ConfMan.getInt("subtitle_scale"), 100, 250);
+	uint32 base = pointSize > 0 ? pointSize : (_bigFont._originalHeight ? _bigFont._originalHeight : 19);
+	uint32 height = base * subtitleScale / 100;
+
+	Common::SeekableReadStream *s = openSubtitleFontFile(fontFile);
+	if (!s) {
+		// Missing file (commonly just the optional bundled fallback not present):
+		// stay quiet and fall back to the default font.
+		debug(1, "Localization: subtitle font '%s' not found; using the default font", fontFile.c_str());
+		return;
+	}
+
+	_subtitleFont._name = fontFile;
+	_subtitleFont._originalHeight = height;
+	_subtitleFont._scaledHeight = StarkGfx->scaleHeightOriginalToCurrent(height);
+
+	Graphics::TTFRenderMode renderMode = StarkSettings->isFontAntialiasingEnabled() ?
+			Graphics::kTTFRenderModeLight : Graphics::kTTFRenderModeMonochrome;
+	bool stemDarkening = StarkSettings->isFontAntialiasingEnabled();
+	_subtitleFont._font = Common::SharedPtr<Graphics::Font>(
+			Graphics::loadTTFFont(s, DisposeAfterUse::YES, _subtitleFont._scaledHeight,
+					Graphics::kTTFSizeModeCell, 0, 0, renderMode, nullptr, stemDarkening));
+
+	if (!_subtitleFont._font) {
+		warning("Localization: failed to load subtitle font '%s'; using the default font", fontFile.c_str());
+		_subtitleFont = FontHolder();
+	}
+}
+
 FontProvider::FontHolder *FontProvider::getFontHolder(FontProvider::FontType type, int32 customFontIndex) {
 	if (type == kSmallFont) {
 		return &_smallFont;
 	} else if (type == kBigFont) {
 		return &_bigFont;
+	} else if (type == kSubtitleFont) {
+		// Use the language pack's font when one is loaded, else the big font.
+		return _subtitleFont._font ? &_subtitleFont : &_bigFont;
 	} else {
 		assert(customFontIndex >= 0 && customFontIndex < 8);
 		return &_customFonts[customFontIndex];

@@ -37,6 +37,7 @@
 #include "engines/stark/services/global.h"
 #include "engines/stark/services/resourceprovider.h"
 #include "engines/stark/services/userinterface.h"
+#include "engines/stark/services/fontprovider.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/staticprovider.h"
 #include "engines/stark/tools/decompiler.h"
@@ -76,6 +77,7 @@ Console::Console() :
 	registerCmd("depthViz",             WRAP_METHOD(Console, Cmd_DepthViz));
 	registerCmd("toggle",               WRAP_METHOD(Console, Cmd_Toggle));
 	registerCmd("setInt",               WRAP_METHOD(Console, Cmd_SetInt));
+	registerCmd("setBool",              WRAP_METHOD(Console, Cmd_SetBool));
 	registerCmd("postPreset",           WRAP_METHOD(Console, Cmd_PostPreset));
 	registerCmd("dumpModels",           WRAP_METHOD(Console, Cmd_DumpModels));
 	registerCmd("dumpModelsOriginal",   WRAP_METHOD(Console, Cmd_DumpModelsOriginal));
@@ -325,6 +327,7 @@ bool Console::Cmd_Toggle(int argc, const char **argv) {
 
 	bool newValue = !ConfMan.getBool(argv[1]);
 	ConfMan.setBool(argv[1], newValue);
+	ConfMan.flushToDisk();
 	debugPrintf("%s: %s\n", argv[1], newValue ? "on" : "off");
 	return true;
 }
@@ -691,14 +694,42 @@ bool Console::Cmd_SetInt(int argc, const char **argv) {
 	if (argc != 3) {
 		debugPrintf("Set an integer enhancement setting\n");
 		debugPrintf("Usage: setInt [key] [value]\n");
-		debugPrintf("Keys: fog_density, marker_scale, subtitle_scale, grade_brightness,\n");
+		debugPrintf("Keys: fog_density, marker_scale, subtitle_scale,\n");
+		debugPrintf("      subtitle_scroll_ms_per_char, grade_brightness,\n");
 		debugPrintf("      grade_contrast, grade_saturation, grade_tint_r/g/b,\n");
 		debugPrintf("      vignette_strength, grain_strength, sharpen_strength\n");
+		debugPrintf("(For on/off settings use setBool instead.)\n");
 		return true;
 	}
 
 	ConfMan.setInt(argv[1], atoi(argv[2]));
+	ConfMan.flushToDisk();
+
+	// The subtitle/dialog font size is baked into the font at load time, so a
+	// live change only takes effect once the fonts are rebuilt.
+	if (scumm_stricmp(argv[1], "subtitle_scale") == 0) {
+		StarkFontProvider->initFonts();
+	}
+
 	debugPrintf("%s: %d\n", argv[1], atoi(argv[2]));
+	return true;
+}
+
+bool Console::Cmd_SetBool(int argc, const char **argv) {
+	if (argc != 3) {
+		debugPrintf("Set a boolean enhancement setting\n");
+		debugPrintf("Usage: setBool [key] [true|false]\n");
+		debugPrintf("Keys: subtitle_autoscroll, enable_assets_mod, marker_colorblind,\n");
+		debugPrintf("      enable_post_processing, enable_depth_of_field, ...\n");
+		return true;
+	}
+
+	Common::String v(argv[2]);
+	bool value = v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on")
+	             || v.equalsIgnoreCase("yes") || v == "1";
+	ConfMan.setBool(argv[1], value);
+	ConfMan.flushToDisk();
+	debugPrintf("%s: %s\n", argv[1], value ? "true" : "false");
 	return true;
 }
 
@@ -710,6 +741,7 @@ bool Console::Cmd_PostPreset(int argc, const char **argv) {
 	ConfMan.setInt("vignette_strength", 35);
 	ConfMan.setInt("grain_strength", 5);
 	ConfMan.setInt("sharpen_strength", 25);
+	ConfMan.flushToDisk();
 	debugPrintf("Applied cinematic post-processing preset\n");
 	return true;
 }
@@ -718,6 +750,7 @@ bool Console::Cmd_PostPreset(int argc, const char **argv) {
 bool Console::Cmd_DepthViz(int argc, const char **argv) {
 	bool newValue = !ConfMan.getBool("debug_show_depth");
 	ConfMan.setBool("debug_show_depth", newValue);
+	ConfMan.flushToDisk();
 	debugPrintf("Depth map visualization: %s\n", newValue ? "on" : "off");
 	return true;
 }

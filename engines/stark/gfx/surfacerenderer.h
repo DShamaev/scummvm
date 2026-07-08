@@ -74,6 +74,15 @@ public:
 	void setSnapToGrid(bool snapToGrid);
 
 	/**
+	 * An extra destination offset, in original (fractional) coordinates, added
+	 * to the destination point. Because the destination point is an integer,
+	 * this allows sub-unit positioning - e.g. smooth pixel-accurate scrolling -
+	 * that snapToGrid then rounds to whole screen pixels. Backends that don't
+	 * implement it simply ignore the offset.
+	 */
+	void setVertexOffset(float x, float y);
+
+	/**
 	 * Set a depth map for the rendered surface.
 	 *
 	 * When set, renderers supporting it write per-pixel depth so 3D items
@@ -90,6 +99,8 @@ protected:
 	bool _noScalingOverride;
 	float _fadeLevel;
 	bool _snapToGrid;
+	float _vertexOffsetX;
+	float _vertexOffsetY;
 
 	const Bitmap *_depthBitmap;
 	float _depthZMin;

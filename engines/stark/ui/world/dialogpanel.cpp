@@ -26,11 +26,16 @@
 #include "engines/stark/services/staticprovider.h"
 #include "engines/stark/services/dialogplayer.h"
 #include "engines/stark/services/settings.h"
+#include "engines/stark/services/localization.h"
 #include "engines/stark/services/userinterface.h"
 #include "engines/stark/ui/cursor.h"
 #include "engines/stark/ui/world/clicktext.h"
 #include "engines/stark/visual/image.h"
 #include "engines/stark/visual/text.h"
+
+#include "common/system.h"
+#include "common/util.h"
+#include "common/config-manager.h"
 
 namespace Stark {
 
@@ -43,7 +48,11 @@ DialogPanel::DialogPanel(Gfx::Driver *gfx, Cursor *cursor) :
 		_firstVisibleOption(0),
 		_lastVisibleOption(0),
 		_focusedOption(0),
-		_acceptIdleMousePos(false) {
+		_acceptIdleMousePos(false),
+		_subtitleShownAt(0),
+		_subtitleScrollTotalMs(0),
+		_subtitleScrollLastMs(0),
+		_subtitleScrollPos(0.0f) {
 	_position = Common::Rect(Gfx::Driver::kOriginalWidth, Gfx::Driver::kBottomBorderHeight);
 	_position.translate(0, Gfx::Driver::kTopBorderHeight + Gfx::Driver::kGameViewportHeight);
 
@@ -137,6 +146,10 @@ void DialogPanel::onGameLoop() {
 	if (_options.empty() && StarkDialogPlayer->areOptionsAvailable()) {
 		updateDialogOptions();
 	}
+
+	if (_subtitleVisual) {
+		updateSubtitleScroll();
+	}
 }
 
 void DialogPanel::onRender() {
@@ -151,17 +164,65 @@ void DialogPanel::onRender() {
 
 		// Draw subtitle if available
 		if (_subtitleVisual && StarkSettings->getBoolSetting(Settings::kSubtitle)) {
-			// Bottom-anchor the subtitle within the panel: with enlarged
-			// subtitle text the block can be taller than the panel strip,
-			// so raise its top instead of letting it spill off-screen.
-			Common::Rect rect = _subtitleVisual->getRect();
-			int top = _optionsTop;
-			if (rect.height() > (int)_optionsHeight) {
-				top = _optionsTop - (rect.height() - _optionsHeight);
-			}
-			_subtitleVisual->render(Common::Point(_optionsLeft, top));
+			renderSubtitle();
 		}
 	}
+}
+
+void DialogPanel::renderSubtitle() {
+	// The dialog panel is a fixed strip (kBottomBorderHeight) and its viewport
+	// clips everything drawn inside it, so an enlarged (subtitle_scale) or long
+	// line whose block is taller than the strip gets cut off. When it doesn't
+	// fit we either auto-scroll it through the strip in sync with the voice
+	// line (default), or - if auto-scroll is disabled - grow the drawable area
+	// upward into the game view so the whole line shows at once.
+	const int strip = Gfx::Driver::kBottomBorderHeight;
+	const int visible = strip - (int)_optionsTop;   // usable height inside the strip
+
+	int blockHeight = _subtitleVisual->getRenderedHeight();
+
+	if (blockHeight <= visible) {
+		// Fits: keep the original placement.
+		_subtitleVisual->render(Common::Point(_optionsLeft, _optionsTop));
+		return;
+	}
+
+	bool autoscroll = !ConfMan.hasKey("subtitle_autoscroll") || ConfMan.getBool("subtitle_autoscroll");
+
+	if (autoscroll) {
+		// Slide the block up through the strip: at fraction 0 the first lines
+		// show, at fraction 1 the block bottom rests on the strip bottom.
+		// Sub-unit scrolling: pass the whole-unit part as the position and the
+		// fractional part as a sub-pixel offset, so the text glides a screen
+		// pixel at a time instead of stepping a whole original unit (~2 px).
+		int maxOffset = blockHeight - visible;
+		float offsetF = CLIP(_subtitleScrollPos, 0.0f, 1.0f) * maxOffset;
+		int offsetInt = (int)offsetF;
+		float offsetFrac = offsetF - offsetInt;
+		_subtitleVisual->render(Common::Point(_optionsLeft, (int)_optionsTop - offsetInt), -offsetFrac);
+		return;
+	}
+
+	// Auto-scroll disabled: expand upward and bottom-anchor to the strip.
+	int lift = MIN(blockHeight - visible, MIN(300, (int)_position.top - Gfx::Driver::kTopBorderHeight));
+	Common::Rect expanded = _position;
+	expanded.top -= lift;
+	_gfx->setViewport(expanded);
+	_subtitleVisual->render(Common::Point(_optionsLeft, (lift + strip) - blockHeight));
+	_gfx->setViewport(_position);
+}
+
+float DialogPanel::subtitleScrollFraction() const {
+	// Elapsed time comes from the voice channel when there is dubbing, so the
+	// scroll tracks the audio; otherwise fall back to wall-clock since the line
+	// appeared (silent lines, or the trailing pause after the voice stops).
+	uint32 elapsed = _currentSpeech ? _currentSpeech->getElapsedTime() : 0;
+	if (elapsed == 0) {
+		elapsed = g_system->getMillis() - _subtitleShownAt;
+	}
+
+	uint32 total = _subtitleScrollTotalMs > 0 ? _subtitleScrollTotalMs : 1;
+	return CLIP(elapsed / (float)total, 0.0f, 1.0f);
 }
 
 void DialogPanel::updateSubtitleVisual() {
@@ -175,8 +236,38 @@ void DialogPanel::updateSubtitleVisual() {
 	_subtitleVisual->setText(_currentSpeech->getPhrase());
 	_subtitleVisual->setAlign(Graphics::TextAlign::kTextAlignStart);
 	_subtitleVisual->setColor(color);
-	_subtitleVisual->setFont(FontProvider::kBigFont);
+	_subtitleVisual->setFont(FontProvider::kSubtitleFont);
 	_subtitleVisual->setTargetWidth(600);
+	// Decode the subtitle in the active language pack's codepage, so a pack in a
+	// different script than the base install (e.g. French over a Russian build)
+	// still renders correctly. UI text keeps the base codepage.
+	if (StarkLocalization) {
+		_subtitleVisual->setCodePage(StarkLocalization->getActiveCodePage());
+	}
+
+	// Pace any auto-scroll to the length of the line. Voice playback drives the
+	// actual scroll (see subtitleScrollFraction); this estimate keeps silent
+	// lines and the trailing pause moving at a natural reading speed.
+	_subtitleShownAt = g_system->getMillis();
+	_subtitleScrollLastMs = _subtitleShownAt;
+	_subtitleScrollPos = 0.0f;
+	int msPerChar = CLIP((int)ConfMan.getInt("subtitle_scroll_ms_per_char"), 20, 300);
+	uint32 phraseLen = _currentSpeech->getPhrase().size();
+	_subtitleScrollTotalMs = MAX<uint32>(1500u, phraseLen * (uint32)msPerChar);
+}
+
+void DialogPanel::updateSubtitleScroll() {
+	// Ease the visible scroll position toward the audio-synced target. The
+	// mixer reports elapsed time in coarse audio-buffer chunks, so using it
+	// directly makes the text jump; smoothing over ~150ms keeps it fluid while
+	// still following the voice line.
+	uint32 now = g_system->getMillis();
+	float dt = (now - _subtitleScrollLastMs) / 150.0f;
+	_subtitleScrollLastMs = now;
+
+	float target = subtitleScrollFraction();
+	float alpha = CLIP(dt, 0.0f, 1.0f);
+	_subtitleScrollPos += (target - _subtitleScrollPos) * alpha;
 }
 
 void DialogPanel::updateDialogOptions() {

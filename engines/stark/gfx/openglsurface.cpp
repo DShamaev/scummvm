@@ -130,7 +130,9 @@ void OpenGLSurfaceRenderer::convertToVertices(SurfaceVertex *vertices, const Com
 	} else {
 		verSizeWH = normalizeOriginalCoordinates(width, height);
 	}
-	auto verOffsetXY = normalizeOriginalCoordinates(dest.x, dest.y);
+	Common::Rect unscaled = _gfx->getUnscaledViewport();
+	Math::Vector2d verOffsetXY((dest.x + _vertexOffsetX) / (float)unscaled.width(),
+	                           (dest.y + _vertexOffsetY) / (float)unscaled.height());
 	auto nativeViewport = _gfx->getViewport();
 	auto viewport = Math::Vector2d(nativeViewport.width(), nativeViewport.height());
 

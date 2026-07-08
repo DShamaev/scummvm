@@ -446,6 +446,12 @@ Common::Array<Item::Hotspot> ItemVisual::listHotspotsImpl() {
 		// Exits are already handled by the exit display feature
 		if (pattables[i]->getDefaultAction() == PATTable::kActionExit) continue;
 
+		// Only highlight points that currently have a runnable action, matching
+		// the cursor's own interactivity test. Without this, inert scenery PAT
+		// points (very common in scripted scenes like the prologue egg rescue)
+		// get markers even though hovering them does nothing.
+		if (pattables[i]->listPossibleActions().empty()) continue;
+
 		Anim *anim = getAnim();
 		if (!anim) continue;
 

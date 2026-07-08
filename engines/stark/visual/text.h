@@ -50,6 +50,13 @@ public:
 
 	Common::Rect getRect();
 
+	/**
+	 * Height of the actually rendered text, expressed in original (640x480)
+	 * panel units. Unlike getRect(), this reflects the scaled font size
+	 * (subtitle_scale), so callers can tell when the text overflows a panel.
+	 */
+	int getRenderedHeight();
+
 	void setText(const Common::String &text);
 	void setColor(const Gfx::Color &color);
 	void setBackgroundColor(const Gfx::Color &color);
@@ -58,10 +65,19 @@ public:
 	void setTargetHeight(uint32 height);
 	void setFont(FontProvider::FontType type, int32 customFontIndex = -1);
 
+	/**
+	 * Force a specific byte encoding for this text, overriding the game's
+	 * default. Used so a subtitle pack in a different script than the base
+	 * install decodes correctly. kCodePageInvalid restores the default.
+	 */
+	void setCodePage(Common::CodePage codePage);
+
 	uint getTargetWidth() { return _targetWidth; }
 	uint getTargetHeight() { return _targetHeight; }
 
 	void render(const Common::Point &position);
+	/** Render with an extra fractional vertical offset for smooth sub-pixel scrolling */
+	void render(const Common::Point &position, float subPixelYOffset);
 	void reset();
 
 private:
@@ -85,6 +101,7 @@ private:
 
 	FontProvider::FontType _fontType;
 	int32 _fontCustomIndex;
+	Common::CodePage _codePage;
 };
 
 } // End of namespace Stark

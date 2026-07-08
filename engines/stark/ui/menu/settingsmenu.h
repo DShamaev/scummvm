@@ -226,6 +226,35 @@ private:
 };
 
 /**
+ * Engine-added widget that cycles the subtitle language through the detected
+ * localization packs, showing "Label: <language name>".
+ */
+class LanguageWidget : public StaticLocationWidget {
+public:
+	LanguageWidget(Gfx::Driver *gfx, const Common::String &label, const Common::Point &textPosition);
+	virtual ~LanguageWidget() {};
+
+	// StaticLocationWidget API
+	void render() override;
+	bool isMouseInside(const Common::Point &mousePos) const override;
+	void onClick() override;
+	void onMouseMove(const Common::Point &mousePos) override;
+	void onScreenChanged() override;
+
+private:
+	void refreshText();
+
+	const Gfx::Color _textColorHovered = Gfx::Color(0x1E, 0x1E, 0x96);
+	const Gfx::Color _textColorDefault = Gfx::Color(0x00, 0x00, 0x00);
+
+	Gfx::Driver *_gfx;
+	VisualText _text;
+	Common::String _label;
+	Common::Point _textPosition;
+	bool _hovered;
+};
+
+/**
  * A clickable text button not bound to a location render entry.
  * Used to navigate between the settings page and the enhancements page.
  */

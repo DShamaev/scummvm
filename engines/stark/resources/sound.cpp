@@ -140,6 +140,13 @@ bool Sound::isPlaying() {
 	return g_system->getMixer()->isSoundHandleActive(_handle);
 }
 
+uint32 Sound::getElapsedTime() {
+	if (!isPlaying()) {
+		return 0;
+	}
+	return g_system->getMixer()->getSoundElapsedTime(_handle);
+}
+
 void Sound::stop() {
 	g_system->getMixer()->stopHandle(_handle);
 	_handle = Audio::SoundHandle();

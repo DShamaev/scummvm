@@ -93,6 +93,13 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("marker_scale", 100);          // percent
 	ConfMan.registerDefault("marker_colorblind", false);
 	ConfMan.registerDefault("subtitle_scale", 100);        // percent
+	ConfMan.registerDefault("subtitle_autoscroll", true);  // scroll long subtitles in sync with the voice
+	ConfMan.registerDefault("subtitle_scroll_ms_per_char", 55); // scroll pacing fallback
+	ConfMan.registerDefault("subtitle_language", "");      // "" = original baked-in text
+	// Broad-coverage fallback font for subtitle packs that don't ship their own.
+	// Drop a TTF with this name in fonts/ or loc/ and it is used automatically
+	// for any selected pack whose script the stylised game font can't render.
+	ConfMan.registerDefault("subtitle_fallback_font", "subtitle_fallback.ttf");
 	ConfMan.registerDefault("stark_autosave_on_travel", true);
 	ConfMan.registerDefault("texture_anisotropy", true);
 	ConfMan.registerDefault("texture_anisotropy_level", 16);

@@ -315,3 +315,4 @@ __pycache__/
 #Ignore Claude instruction files
 CLAUDE.md
 .claude
+/dump/

@@ -99,6 +99,18 @@ private:
 	Resources::Speech *_currentSpeech;
 	void abortCurrentSpeech();
 
+	/** Render the current subtitle, growing/scrolling it when it overflows the panel */
+	void renderSubtitle();
+	/** 0..1 progress used to auto-scroll a long subtitle, synced to the voice line */
+	float subtitleScrollFraction() const;
+
+	uint32 _subtitleShownAt;      // g_system->getMillis() when the subtitle appeared
+	uint32 _subtitleScrollTotalMs; // estimated on-screen duration, for scroll pacing
+	uint32 _subtitleScrollLastMs; // last frame time, for smoothing the scroll motion
+	float _subtitleScrollPos;     // smoothed 0..1 scroll position (eases toward audio)
+	/** Advance the smoothed scroll position toward the audio-synced target */
+	void updateSubtitleScroll();
+
 	uint32 _firstVisibleOption, _lastVisibleOption;
 	uint32 _focusedOption;
 	Common::Array<ClickText*> _options;

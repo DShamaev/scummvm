@@ -41,6 +41,7 @@
 #include "engines/stark/services/settings.h"
 #include "engines/stark/services/gamechapter.h"
 #include "engines/stark/services/gamemessage.h"
+#include "engines/stark/services/localization.h"
 #include "engines/stark/gfx/driver.h"
 
 #include "audio/mixer.h"
@@ -88,6 +89,7 @@ StarkEngine::~StarkEngine() {
 	delete StarkServices::instance().settings;
 	delete StarkServices::instance().gameChapter;
 	delete StarkServices::instance().gameMessage;
+	delete StarkServices::instance().localizationProvider;
 	delete StarkServices::instance().gfx;
 
 	StarkServices::destroy();
@@ -129,9 +131,11 @@ Common::Error StarkEngine::run() {
 	services.settings = new Settings(_mixer, _gameDescription);
 	services.gameChapter = new GameChapter();
 	services.gameMessage = new GameMessage();
+	services.localizationProvider = new LocalizationProvider();
 
 	// Load global resources
 	services.staticProvider->init();
+	services.localizationProvider->init();
 	services.fontProvider->initFonts();
 
 	// Apply the sound volume settings

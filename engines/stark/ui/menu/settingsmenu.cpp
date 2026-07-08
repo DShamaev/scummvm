@@ -29,6 +29,7 @@
 #include "engines/stark/resources/sound.h"
 #include "engines/stark/gfx/renderentry.h"
 #include "engines/stark/services/fontprovider.h"
+#include "engines/stark/services/localization.h"
 
 namespace Stark {
 
@@ -292,11 +293,21 @@ void SettingsMenuScreen::buildEnhancementsPage() {
 	y += step;
 	_widgets.push_back(new CustomCycleWidget(_gfx, "Subtitle size", Common::Point(rightX, y), "subtitle_scale", subValues, "%"));
 	_widgets.back()->setupSounds(3, 4);
+
+	// Subtitle language picker: cycles the "Original" text plus any detected
+	// drop-in subtitle packs (see LocalizationProvider).
+	y += step;
+	_widgets.push_back(new LanguageWidget(_gfx, "Subtitle lang", Common::Point(rightX, y)));
+	_widgets.back()->setupSounds(3, 4);
 }
 
 void SettingsMenuScreen::close() {
 	_soundManager.close();
 	ConfMan.flushToDisk();
+	// Apply any "Subtitle size" change right away: the dialog font size is baked
+	// into the font when it is loaded, so it only changes once the fonts are
+	// rebuilt. (Marker size is read live each frame and needs no rebuild.)
+	StarkFontProvider->initFonts();
 	StaticLocationScreen::close();
 }
 
@@ -340,6 +351,10 @@ void SettingsMenuScreen::textHandler(StaticLocationWidget &widget, const Common:
 template<Settings::BoolSettingIndex N>
 void SettingsMenuScreen::flipSettingHandler() {
 	StarkSettings->flipSetting(N);
+	// Persist right away so the change survives even if the player quits
+	// directly from this screen without backing out (which is what triggers
+	// the flush in close()).
+	ConfMan.flushToDisk();
 }
 
 template<int N>
@@ -347,6 +362,7 @@ void SettingsMenuScreen::flipBoolKeyHandler() {
 	// N selects which engine-added boolean key to flip
 	const char *key = "marker_colorblind";
 	ConfMan.setBool(key, !ConfMan.getBool(key));
+	ConfMan.flushToDisk();
 }
 
 void SettingsMenuScreen::backHandler() {
@@ -451,6 +467,7 @@ void CustomCheckboxWidget::onClick() {
 	// Self-managing variant writes the ConfMan key directly
 	if (!_confKey.empty()) {
 		ConfMan.setBool(_confKey, _isChecked);
+		ConfMan.flushToDisk();
 	}
 }
 
@@ -539,6 +556,7 @@ void CustomCycleWidget::onClick() {
 		}
 	}
 	ConfMan.setInt(_confKey, _values[nextIndex]);
+	ConfMan.flushToDisk();
 	refreshText();
 	_text.setColor(_hovered ? _textColorHovered : _textColorDefault);
 }
@@ -549,6 +567,52 @@ void CustomCycleWidget::onMouseMove(const Common::Point &mousePos) {
 }
 
 void CustomCycleWidget::onScreenChanged() {
+	_text.reset();
+}
+
+LanguageWidget::LanguageWidget(Gfx::Driver *gfx, const Common::String &label,
+                               const Common::Point &textPosition) :
+		StaticLocationWidget(nullptr, nullptr, nullptr),
+		_gfx(gfx),
+		_text(gfx),
+		_label(label),
+		_textPosition(textPosition),
+		_hovered(false) {
+	_text.setColor(_textColorDefault);
+	_text.setFont(FontProvider::kCustomFont, 3);
+	refreshText();
+}
+
+void LanguageWidget::refreshText() {
+	Common::String name = StarkLocalization ? StarkLocalization->getSelectedName() : Common::String("Original");
+	_text.setText(Common::String::format("%s: %s", _label.c_str(), name.c_str()));
+}
+
+void LanguageWidget::render() {
+	_text.render(_textPosition);
+}
+
+bool LanguageWidget::isMouseInside(const Common::Point &mousePos) const {
+	Common::Rect rect = const_cast<LanguageWidget *>(this)->_text.getRect();
+	return mousePos.x >= _textPosition.x && mousePos.x <= _textPosition.x + rect.width() &&
+	       mousePos.y >= _textPosition.y && mousePos.y <= _textPosition.y + rect.height();
+}
+
+void LanguageWidget::onClick() {
+	StaticLocationWidget::onClick();
+	if (StarkLocalization) {
+		StarkLocalization->cycleNext();
+	}
+	refreshText();
+	_text.setColor(_hovered ? _textColorHovered : _textColorDefault);
+}
+
+void LanguageWidget::onMouseMove(const Common::Point &mousePos) {
+	_hovered = isMouseInside(mousePos);
+	_text.setColor(_hovered ? _textColorHovered : _textColorDefault);
+}
+
+void LanguageWidget::onScreenChanged() {
 	_text.reset();
 }
 

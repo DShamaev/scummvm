@@ -28,6 +28,8 @@ SurfaceRenderer::SurfaceRenderer() :
 		_noScalingOverride(false),
 		_fadeLevel(0),
 		_snapToGrid(false),
+		_vertexOffsetX(0.0f),
+		_vertexOffsetY(0.0f),
 		_depthBitmap(nullptr),
 		_depthZMin(0.0f),
 		_depthZMax(1.0f),
@@ -47,6 +49,11 @@ void SurfaceRenderer::setFadeLevel(float fadeLevel) {
 
 void SurfaceRenderer::setSnapToGrid(bool snapToGrid) {
 	_snapToGrid = snapToGrid;
+}
+
+void SurfaceRenderer::setVertexOffset(float x, float y) {
+	_vertexOffsetX = x;
+	_vertexOffsetY = y;
 }
 
 void SurfaceRenderer::setDepthBitmap(const Bitmap *bitmap, float zMin, float zMax, float bias) {

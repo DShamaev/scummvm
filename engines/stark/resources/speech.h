@@ -68,6 +68,9 @@ public:
 	/** Return true if the speech is playing */
 	bool isPlaying();
 
+	/** Voice playback position in milliseconds, or 0 if there is no dubbing playing */
+	uint32 getElapsedTime();
+
 	/** Stop the speech if it is playing */
 	void stop();
 

@@ -25,6 +25,7 @@
 
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/settings.h"
+#include "engines/stark/services/localization.h"
 #include "engines/stark/services/dialogplayer.h"
 #include "engines/stark/services/diary.h"
 #include "engines/stark/services/global.h"
@@ -55,6 +56,11 @@ Speech::Speech(Object *parent, byte subType, uint16 index, const Common::String 
 }
 
 Common::String Speech::getPhrase() const {
+	// Apply the selected subtitle-language pack, if any. The voice track is
+	// unaffected; only the on-screen (and diary) text is overridden.
+	if (StarkLocalization) {
+		return StarkLocalization->translate(_phrase);
+	}
 	return _phrase;
 }
 
@@ -125,6 +131,10 @@ int32 Speech::getCharacterId() {
 
 bool Speech::isPlaying() {
 	return _soundResource || _waitTimeRemaining > 0;
+}
+
+uint32 Speech::getElapsedTime() {
+	return _soundResource ? _soundResource->getElapsedTime() : 0;
 }
 
 void Speech::stop() {
