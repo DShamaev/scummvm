@@ -258,6 +258,13 @@ Common::String OpenGLSDriver::testFramebuffer() {
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
 
+	// Save state we are about to change, so the diagnostic doesn't disturb the
+	// live frame (else the screen shows a stray viewport / clear colour).
+	GLint savedViewport[4] = { 0, 0, 0, 0 };
+	GLfloat savedClear[4] = { 0, 0, 0, 0 };
+	glGetIntegerv(GL_VIEWPORT, savedViewport);
+	glGetFloatv(GL_COLOR_CLEAR_VALUE, savedClear);
+
 	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	Common::String result;
 	if (status != GL_FRAMEBUFFER_COMPLETE) {
@@ -297,6 +304,10 @@ Common::String OpenGLSDriver::testFramebuffer() {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glDeleteFramebuffers(1, &fbo);
 	glDeleteTextures(1, &tex);
+
+	// Restore the state we touched so the live frame is unaffected.
+	glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
+	glClearColor(savedClear[0], savedClear[1], savedClear[2], savedClear[3]);
 	return result;
 }
 
