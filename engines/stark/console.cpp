@@ -85,6 +85,7 @@ Console::Console() :
 	registerCmd("renderEntries",        WRAP_METHOD(Console, Cmd_RenderEntries));
 	registerCmd("testFBO",              WRAP_METHOD(Console, Cmd_TestFBO));
 	registerCmd("postPreset",           WRAP_METHOD(Console, Cmd_PostPreset));
+	registerCmd("resetPost",            WRAP_METHOD(Console, Cmd_ResetPost));
 	registerCmd("dumpModels",           WRAP_METHOD(Console, Cmd_DumpModels));
 	registerCmd("dumpModelsOriginal",   WRAP_METHOD(Console, Cmd_DumpModelsOriginal));
 	registerCmd("dumpAll",              WRAP_METHOD(Console, Cmd_DumpAll));
@@ -861,6 +862,49 @@ bool Console::Cmd_PostPreset(int argc, const char **argv) {
 	ConfMan.setInt("sharpen_strength", 25);
 	ConfMan.flushToDisk();
 	debugPrintf("Applied cinematic post-processing preset\n");
+	return true;
+}
+
+bool Console::Cmd_ResetPost(int argc, const char **argv) {
+	// Reset every post-processing / graphics-enhancement setting to its default
+	// by removing the override, so each key falls back to its registerDefault()
+	// value (the single source of truth). Applies on the next frame - no restart.
+	static const char *const keys[] = {
+		// Master + colour grade
+		"enable_post_processing", "auto_scene_post", "post_master", "enable_hq_post",
+		"grade_brightness", "grade_contrast", "grade_saturation",
+		"grade_tint_r", "grade_tint_g", "grade_tint_b",
+		"vignette_strength", "grain_strength", "sharpen_strength",
+		"tonemap_strength", "bloom_strength", "bloom_threshold",
+		// Depth of field
+		"enable_depth_of_field", "dof_strength", "dof_range",
+		// SSAO
+		"ssao_strength", "ssao_master", "ssao_radius",
+		// Depth / occlusion plumbing
+		"enable_depth_copy", "enable_depth_maps", "enable_sprite_depth",
+		"enable_sprite_occlusion", "enable_normal_mapping",
+		// Character lighting
+		"ambient_matching", "scene_lighting_strength", "scene_directional_strength",
+		"character_min_light", "enhanced_actor_light", "specular_scale",
+		// Atmospheric fog
+		"enable_depth_fog", "fog_density",
+		// Magnifier + diagnostics
+		"magnify", "post_debug_view", "post_debug_log",
+		"debug_show_normals", "debug_show_depth",
+		nullptr
+	};
+
+	const Common::String domain = ConfMan.getActiveDomainName();
+	int n = 0;
+	for (int i = 0; keys[i]; i++) {
+		if (ConfMan.hasKey(keys[i], domain)) {
+			ConfMan.removeKey(keys[i], domain);
+			n++;
+		}
+	}
+	ConfMan.flushToDisk();
+	debugPrintf("Reset %d post/enhancement setting(s) to defaults.\n", n);
+	debugPrintf("Takes effect on the next frame - no restart needed.\n");
 	return true;
 }
 

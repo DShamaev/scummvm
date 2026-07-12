@@ -75,6 +75,7 @@ private:
 	bool Cmd_RenderEntries(int argc, const char **argv);
 	bool Cmd_TestFBO(int argc, const char **argv);
 	bool Cmd_PostPreset(int argc, const char **argv);
+	bool Cmd_ResetPost(int argc, const char **argv);
 	bool Cmd_DumpModels(int argc, const char **argv);
 	bool Cmd_DumpModelsOriginal(int argc, const char **argv);
 	bool Cmd_DumpAll(int argc, const char **argv);

@@ -117,6 +117,7 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("replacement_png_premultiply_alpha", false);
 	ConfMan.registerDefault("debug_show_depth", false);
 	ConfMan.registerDefault("post_debug_view", 0);   // 0=off,1=depth,2=dyn mask,3=bg mask
+	ConfMan.registerDefault("post_debug_log", 0);    // 1 = log one post-pass state line, then self-resets
 	ConfMan.registerDefault("debug_show_normals", false);
 	ConfMan.registerDefault("scene_lighting_strength", 60);   // percent
 	// Lowest the ambient-matching may dim a character (percent). Lower = the
