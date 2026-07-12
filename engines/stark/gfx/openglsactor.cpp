@@ -498,10 +498,16 @@ bool OpenGLSActorRenderer::renderShadowBackground() {
 
 	// First cut: no scene depth-test yet (validate the reconstruction first; the
 	// character may briefly self-shadow until occlusion is added).
+	int bgDebug = CLIP(ConfMan.hasKey("shadow_bg_debug") ? (int)ConfMan.getInt("shadow_bg_debug") : 0, 0, 4);
+
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	if (bgDebug > 0) {
+		glDisable(GL_BLEND);   // opaque debug fills the screen
+	} else {
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
 
 	_shadowBgShader->enableVertexAttribute("position", _shadowBgVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
 	_shadowBgShader->enableVertexAttribute("texcoord", _shadowBgVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
@@ -520,6 +526,7 @@ bool OpenGLSActorRenderer::renderShadowBackground() {
 	float soft = CLIP(ConfMan.hasKey("shadow_map_softness") ? (int)ConfMan.getInt("shadow_map_softness") : 2, 1, 40);
 	_shadowBgShader->setUniform1f("shadowSoftness", soft);
 	_shadowBgShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
+	_shadowBgShader->setUniform1f("bgDebug", (float)bgDebug);
 
 	glActiveTexture(GL_TEXTURE1);
 	_gfx->bindWorldDepth();

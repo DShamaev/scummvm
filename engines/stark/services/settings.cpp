@@ -107,6 +107,7 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("shadow_map_softness", 2);   // PCF spread in texels (1 = crisp, higher = softer)
 	ConfMan.registerDefault("shadow_map_depth_bias", 4); // polygon offset so furniture occludes the floor shadow
 	ConfMan.registerDefault("shadow_wall", true);        // drape the shadow over walls/furniture via the depth map
+	ConfMan.registerDefault("shadow_bg_debug", 0);       // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light UV
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
 	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
 	// safe kill switch. Also sharpens the detail magnifier.

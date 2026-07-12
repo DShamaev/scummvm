@@ -17,6 +17,7 @@ uniform float shadowAlpha;
 uniform float shadowBias;
 uniform vec2 shadowTexel;
 uniform float shadowSoftness;
+uniform float bgDebug;   // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light-space UV
 
 float decodeMask(vec2 uv) {
 	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y)); // mask is top-origin
@@ -45,6 +46,22 @@ void main() {
 	vec4 lc = lightVP * world;
 	vec3 lndc = lc.xyz / lc.w;
 	vec2 suv = lndc.xy * 0.5 + 0.5;
+
+	// Diagnostic visualizations (opaque, fill the whole screen):
+	//   1 = mask depth (grey), 2 = reconstructed eye x/y, 3 = world x/y, 4 = the
+	//   light-space UV the pixel maps to (should be smooth around the caster).
+	if (bgDebug > 0.5) {
+		if (bgDebug < 1.5) {
+			outColor = vec4(vec3(norm), 1.0);
+		} else if (bgDebug < 2.5) {
+			outColor = vec4(fract(eyePos.x * 0.01), fract(eyePos.y * 0.01), 0.0, 1.0);
+		} else if (bgDebug < 3.5) {
+			outColor = vec4(fract(world.x * 0.001), fract(world.y * 0.001), fract(world.z * 0.001), 1.0);
+		} else {
+			outColor = vec4(clamp(suv, 0.0, 1.0), 0.0, 1.0);
+		}
+		return;
+	}
 
 	// Outside the shadow map (light frustum) => not shadowed.
 	if (suv.x < 0.01 || suv.x > 0.99 || suv.y < 0.01 || suv.y > 0.99) {
