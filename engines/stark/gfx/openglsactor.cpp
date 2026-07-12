@@ -550,6 +550,18 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	// Prefer draping the shadow over the depth-mapped background (walls/furniture)
 	// when a depth mask exists; fall back to the flat ground quad otherwise.
 	if (!ConfMan.hasKey("shadow_wall") || ConfMan.getBool("shadow_wall")) {
+		if (ConfMan.hasKey("shadow_bg_debug") && ConfMan.getInt("shadow_bg_debug") == 5) {
+			Math::Matrix4 pj = StarkScene->getProjectionMatrix();
+			Math::Matrix4 iv = StarkScene->getViewMatrix();
+			iv.inverse();
+			// invView translation = camera world position.
+			warning("Stark shadow-bg: projScale=(%.4f,%.4f) actorPos=(%.1f,%.1f,%.1f) "
+			        "camPos~(%.1f,%.1f,%.1f) zMin=%.1f zMax=%.1f lightHalfExtent=150 dist=400",
+			        pj(0, 0), pj(1, 1), position.x(), position.y(), position.z(),
+			        iv(0, 3), iv(1, 3), iv(2, 3),
+			        _gfx->getWorldDepthZMin(), _gfx->getWorldDepthZMax());
+			ConfMan.setInt("shadow_bg_debug", 0);
+		}
 		if (renderShadowBackground()) {
 			return;
 		}
