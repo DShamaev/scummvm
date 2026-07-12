@@ -636,24 +636,31 @@ void OpenGLSDriver::applyPostProcess() {
 	// Depth source for SSAO / DoF: the real GL depth buffer (includes the
 	// character - best quality) when enabled and available, else the background
 	// depth-mask texture the engine already loads (no character, but never hangs).
-	// Under supersampling the resolve leaves the engine framebuffer's depth stale
-	// and this GL 2.1 stack can't reliably copy depth out of the supersampled
-	// buffer's packed depth-stencil renderbuffer, so fall back to the world-mask
-	// depth path (which is a normal texture and resolution-independent).
-	bool useGLDepth = ConfMan.getBool("enable_depth_copy") && !_frameSupersampled;
+	bool useGLDepth = ConfMan.getBool("enable_depth_copy");
 	bool haveDepth  = useGLDepth || _worldDepthBitmap != nullptr;
-	bool dof        = ConfMan.getBool("enable_depth_of_field") && haveDepth;
+	// Supersampling and the depth effects are mutually exclusive: the scene depth
+	// lives in the supersampled buffer, and this GL 2.1 stack can't reliably read
+	// depth back out of it, while the world-mask fallback is weaker (no character
+	// contact, and it re-darkens the pre-shaded art). So skip SSAO/DoF while
+	// supersampling - the frame is pure SSAA. (supersample 100 restores them.)
+	bool dof        = ConfMan.getBool("enable_depth_of_field") && haveDepth && !_frameSupersampled;
 	// Effective SSAO = per-scene base (from post_scenes.json, or the global
 	// ssao_strength for un-analysed scenes) scaled by the master gain the menu
 	// slider controls. The master always has an effect, even where a per-scene
 	// value would otherwise fully override the global.
 	int ssaoEff     = CLIP(StarkScene->getPostSetting("ssao_strength") *
 	                       CLIP(ConfMan.getInt("ssao_master"), 0, 300) / 100, 0, 100);
-	bool ssao       = ssaoEff > 0 && haveDepth;
+	bool ssao       = ssaoEff > 0 && haveDepth && !_frameSupersampled;
 	// The depth debug views need the depth source bound even when SSAO/DoF are
 	// off, so they always reflect the true depth setup rather than stale/unbound
 	// samplers (which read as "everything is background").
 	int debugView   = CLIP(ConfMan.getInt("post_debug_view"), 0, 5);
+	// The depth debug views rely on the same depth that is unavailable while
+	// supersampling, so they would show garbage - suppress them there (inspect
+	// depth at supersample 100 instead).
+	if (_frameSupersampled) {
+		debugView = 0;
+	}
 	bool wantDepth  = dof || ssao || debugView > 0;
 
 	// Nothing to apply: leave the already-rendered frame as-is.
