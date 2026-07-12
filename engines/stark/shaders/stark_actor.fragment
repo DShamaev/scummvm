@@ -36,11 +36,15 @@ uniform vec3 ambientTint;
 uniform vec3 sceneLightDir;
 uniform float sceneLightStrength;
 
-// Atmospheric depth fog. fogDensity == 0 disables it.
+// Atmospheric depth fog. fogDensity == 0 disables it. fogCharDist is the whole
+// character's stable eye-space distance (set on the CPU), used instead of the
+// per-fragment distance so animation can't make the fog blend - and thus the
+// character's color - pulsate.
 uniform vec3 fogColor;
 uniform float fogStart;
 uniform float fogEnd;
 uniform float fogDensity;
+uniform float fogCharDist;
 
 // Specular and rim intensities - set per material (skin, cloth, metal, eyes...)
 uniform float specularStrength;
@@ -165,8 +169,7 @@ void main() {
 	// Atmospheric fog: blend toward the scene's horizon color with distance,
 	// so characters recede into exterior haze instead of staying crisp
 	if (fogDensity > 0.0) {
-		float dist = length(EyePosition);
-		float f = clamp((dist - fogStart) / max(fogEnd - fogStart, 0.001), 0.0, 1.0);
+		float f = clamp((fogCharDist - fogStart) / max(fogEnd - fogStart, 0.001), 0.0, 1.0);
 		finalColor = mix(finalColor, fogColor, clamp(f * fogDensity, 0.0, 1.0));
 	}
 

@@ -154,6 +154,17 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	_shader->setUniform1f("enhancedLight",
 			ConfMan.hasKey("enhanced_actor_light") && !ConfMan.getBool("enhanced_actor_light") ? 0.0f : 1.0f);
 
+	// Distance from the camera to the character's origin, in the same eye-space
+	// units as the background depth band. Fog is applied by this single stable
+	// distance rather than per-fragment length(EyePosition): the animating
+	// vertices wobble toward/away from the camera each frame, and against the
+	// (steep) background-derived fog band that wobble made the character's color
+	// pulsate. Its ground position only changes as it actually walks, smoothly.
+	Math::Vector4d fogCharWorld(position.x(), position.y(), position.z(), 1.0f);
+	Math::Vector4d fogCharEye = view * fogCharWorld;
+	float fogCharDist = Math::Vector3d(fogCharEye.x(), fogCharEye.y(), fogCharEye.z()).getMagnitude();
+	_shader->setUniform1f("fogCharDist", fogCharDist);
+
 	// Atmospheric fog: only where the location has a depth-mapped background
 	// (exteriors), using its depth range and horizon color
 	float fogDensity = 0.0f;
