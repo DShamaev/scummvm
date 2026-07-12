@@ -173,6 +173,12 @@ private:
 	GLuint _aoTexA;
 	GLuint _aoTexB;
 
+	// High-quality depth-of-field: a single pre-blurred half-res copy of the
+	// scene that the composite cross-fades toward by circle-of-confusion, giving
+	// smooth bokeh instead of the harsh single-pass ring over the sharp image.
+	GLuint _dofTexA;
+	GLuint _dofTexB;
+
 	// Render one fullscreen pass with _blurShader from srcTex into dstTex (bound
 	// to _bloomFbo), at the current _bloomW x _bloomH. mode 1 = bright-pass.
 	void blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dirY, float mode, float threshold);
@@ -180,6 +186,8 @@ private:
 	void buildBloom(int vw, int vh, float threshold);
 	// Build the denoised AO texture (_aoTexA). Depth must already be bound/decided.
 	void buildSSAO(int vw, int vh, float radius, float dynamicOnly);
+	// Build the pre-blurred scene copy (_dofTexA) for depth-of-field.
+	void buildDoF(int vw, int vh, int iterations);
 	// Ensure the half-res ping-pong textures exist at vw/2 x vh/2.
 	void ensureHalfResTargets(int vw, int vh);
 
