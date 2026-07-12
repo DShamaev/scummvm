@@ -91,6 +91,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_postHeight(0),
 	_postActive(false),
 	_renderScale(1),
+	_sceneFbo(0),
 	_magTex(0),
 	_magWidth(0),
 	_magHeight(0),
@@ -547,70 +548,77 @@ void OpenGLSDriver::freePostResources() {
 }
 
 bool OpenGLSDriver::beginPostProcess() {
-	// Rendering the scene into an FBO hangs on Apple's GL-over-Metal stack, so
-	// the scene now always renders straight to the back buffer; post-processing
-	// is applied afterwards from a back-buffer copy (see applyPostProcess).
-	return false;
+	// Supersampling (SSAA): render the whole frame into an offscreen buffer at
+	// _renderScale x resolution, then resolveSupersample downsamples it back into
+	// the engine's framebuffer. FBO scene rendering works on this stack (the old
+	// "hang" was the pause-key confound); the composite/effects still run after,
+	// in applyPostProcess. 'supersample' == 100 disables this entirely.
+	int ss = ConfMan.hasKey("supersample") ? ConfMan.getInt("supersample") : 100;
+	_renderScale = (CLIP(ss, 100, 200) >= 150) ? 2 : 1;
+	if (_renderScale < 2) {
+		return false;
+	}
+
+	// Remember the framebuffer the engine handed us, to resolve back into.
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &_sceneFbo);
+
+	int w = g_system->getWidth() * _renderScale;
+	int h = g_system->getHeight() * _renderScale;
+	ensurePostResources(w, h);
+	if (!_postFBO) {          // incomplete FBO: fall back to native rendering
+		_renderScale = 1;
+		return false;
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, _postFBO);
+	glViewport(0, 0, w, h);
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+	_postActive = true;   // makes setViewport scale rendering by _renderScale
+	return true;
 }
 
-void OpenGLSDriver::endPostProcess() {
+void OpenGLSDriver::resolveSupersample() {
 	if (!_postActive) {
 		return;
 	}
 	_postActive = false;
 
-	// Composite the offscreen frame to the screen through the post shader
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	// Downsample the supersampled frame back into the engine's framebuffer. A
+	// single bilinear tap per output pixel box-filters the 2x2 source block -
+	// that averaging IS the anti-aliasing. Uses the blur shader in plain-copy
+	// mode (mode 0, zero direction => the 9 taps collapse to one centre sample).
+	glBindFramebuffer(GL_FRAMEBUFFER, _sceneFbo);
 	glViewport(0, 0, g_system->getWidth(), g_system->getHeight());
 
+	GLboolean scissorWas = glIsEnabled(GL_SCISSOR_TEST);
+	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 	glDisable(GL_BLEND);
 
-	_postShader->use();
-	_postShader->setUniform("sceneTex", 0);
-	_postShader->setUniform("texelSize", Math::Vector2d(1.0f / _postWidth, 1.0f / _postHeight));
-	_postShader->setUniform1f("time", (g_system->getMillis() % 10000) / 1000.0f);
-
-	// Detail magnifier: zoom into the (supersampled) frame around the cursor so
-	// fine geometry - e.g. skinning spikes - can be inspected. 100 = off.
-	float magnify = CLIP(ConfMan.hasKey("magnify") ? ConfMan.getInt("magnify") : 100, 100, 800) / 100.0f;
-	_postShader->setUniform1f("magnify", magnify);
-
-	// Zoom centre follows the mouse cursor (UV, y flipped to texture space).
-	Common::Point mouse = g_system->getEventManager()->getMousePos();
-	float cx = CLIP((float)mouse.x / (float)g_system->getWidth(), 0.0f, 1.0f);
-	float cy = 1.0f - CLIP((float)mouse.y / (float)g_system->getHeight(), 0.0f, 1.0f);
-	_postShader->setUniform("magnifyCenter", Math::Vector2d(cx, cy));
-
-	// Color grading
-	_postShader->setUniform1f("gradeBrightness", ConfMan.getInt("grade_brightness") / 100.0f);
-	_postShader->setUniform1f("gradeContrast", ConfMan.getInt("grade_contrast") / 100.0f);
-	_postShader->setUniform1f("gradeSaturation", ConfMan.getInt("grade_saturation") / 100.0f);
-	_postShader->setUniform("gradeTint", Math::Vector3d(
-			ConfMan.getInt("grade_tint_r") / 100.0f,
-			ConfMan.getInt("grade_tint_g") / 100.0f,
-			ConfMan.getInt("grade_tint_b") / 100.0f));
-
-	// Effects
-	_postShader->setUniform1f("vignetteStrength", ConfMan.getInt("vignette_strength") / 100.0f);
-	_postShader->setUniform1f("grainStrength", ConfMan.getInt("grain_strength") / 100.0f);
-	_postShader->setUniform1f("sharpenStrength", ConfMan.getInt("sharpen_strength") / 100.0f);
-
-	// Depth of field is disabled: sampling the FBO depth attachment hangs on
-	// this GL stack. Kept as a no-op uniform until an MRT depth pass is added.
-	_postShader->setUniform1f("dofStrength", 0.0f);
-
+	_blurShader->use();
+	_blurShader->setUniform("tex", 0);
+	_blurShader->setUniform("direction", Math::Vector2d(0.0f, 0.0f));
+	_blurShader->setUniform1f("mode", 0.0f);
+	_blurShader->setUniform1f("threshold", 0.0f);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, _postColorTex);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
 	glBindTexture(GL_TEXTURE_2D, 0);
+	_blurShader->unbind();
 
-	_postShader->unbind();
-
+	if (scissorWas) {
+		glEnable(GL_SCISSOR_TEST);
+	}
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
+}
+
+void OpenGLSDriver::endPostProcess() {
+	// Legacy single-pass FBO composite, superseded by applyPostProcess (copy
+	// path) + resolveSupersample. Kept as a no-op for the driver interface.
+	_postActive = false;
 }
 
 void OpenGLSDriver::applyPostProcess() {

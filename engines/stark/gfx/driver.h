@@ -115,6 +115,13 @@ public:
 	virtual void endPostProcess() {}
 
 	/**
+	 * Supersampling resolve: if beginPostProcess redirected the frame into a
+	 * supersampled buffer, downsample it back into the engine framebuffer.
+	 * No-op otherwise. Called after the frame is rendered, before applyPostProcess.
+	 */
+	virtual void resolveSupersample() {}
+
+	/**
 	 * Screen-space post-processing pass over the CURRENT viewport region: copy
 	 * that region from the back buffer and redraw it through the post shader
 	 * (colour grade, vignette, grain, sharpen, depth-of-field, cursor magnifier).

@@ -301,8 +301,16 @@ void StarkEngine::updateDisplayScene() {
 	// Update the UI state before displaying the scene
 	StarkUserInterface->onGameLoop();
 
+	// Supersampling (SSAA): redirect the whole frame into a 2x offscreen buffer
+	// (no-op when the 'supersample' setting is off), render it, then downsample
+	// back into the engine framebuffer. The downsample averaging anti-aliases the
+	// low-poly geometry and sharpens the detail magnifier.
+	StarkGfx->beginPostProcess();
+
 	// Tell the UI to render, and update implicitly, if this leads to new mouse-over events.
 	StarkUserInterface->render();
+
+	StarkGfx->resolveSupersample();
 
 	// Screen-space post-processing (grade/vignette/grain/sharpen/magnifier).
 	// Run at end of frame, after the render pass is composited - copying the

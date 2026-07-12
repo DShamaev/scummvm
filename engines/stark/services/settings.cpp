@@ -98,6 +98,10 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// Multi-pass FBO post: wide, smooth bloom (bright-pass + separable Gaussian)
 	// instead of the single-pass inline bloom. Now that FBOs work on this stack.
 	ConfMan.registerDefault("enable_hq_post", true);
+	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
+	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
+	// safe kill switch. Also sharpens the detail magnifier.
+	ConfMan.registerDefault("supersample", 100);
 	// SSAO/DoF use the real GL depth buffer (includes the character) rather than
 	// the background depth mask. Confirmed working on Apple GL-over-Metal (the
 	// earlier "hang" was the pause-key bug); mask is the fallback if a stack

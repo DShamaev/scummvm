@@ -76,9 +76,17 @@ public:
 	 * Returns false if post-processing is unavailable or disabled, in
 	 * which case rendering proceeds directly to the screen as before.
 	 */
-	bool beginPostProcess();
-	void endPostProcess();
+	bool beginPostProcess() override;
+	void endPostProcess() override;
 	void applyPostProcess() override;
+
+	/**
+	 * Supersampling (SSAA): beginPostProcess redirects the whole frame into an
+	 * offscreen buffer rendered at _renderScale x, and resolveSupersample
+	 * downsamples it back into the engine's framebuffer (the anti-aliasing).
+	 * Both no-op when the 'supersample' setting is 100 (off).
+	 */
+	void resolveSupersample() override;
 
 	/**
 	 * Register the current location's background depth-mask texture (a normal
@@ -125,6 +133,7 @@ private:
 	int _postHeight;
 	bool _postActive;
 	int _renderScale;   // supersample factor for the in-game FBO (1 = off)
+	GLint _sceneFbo;    // the engine framebuffer to resolve the supersampled frame back into
 
 	// Copy-path post-processing + detail magnifier. Instead of rendering the
 	// scene into an FBO (which hangs on Apple's GL-over-Metal stack), the frame
