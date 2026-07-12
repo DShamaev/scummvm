@@ -83,13 +83,43 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 
 	// Depth of field: focus on the character, soften by distance
 	ConfMan.registerDefault("enable_depth_of_field", false);
-	ConfMan.registerDefault("dof_strength", 12);   // max blur radius in texels
-	ConfMan.registerDefault("dof_range", 60);      // falloff width, % of focus distance
+	ConfMan.registerDefault("dof_strength", 3);    // max blur radius in texels
+	ConfMan.registerDefault("dof_range", 200);     // falloff width, % of focus distance
+
+	// Contact ambient occlusion (depth-only), filmic tonemap and bloom
+	ConfMan.registerDefault("ssao_strength", 0);   // percent, 0 = off (per-scene base)
+	ConfMan.registerDefault("ssao_master", 100);   // master gain over per-scene SSAO, %
+	ConfMan.registerDefault("ssao_radius", 18);    // sample radius in texels
+	ConfMan.registerDefault("tonemap_strength", 0);// percent ACES mix, 0 = off
+	ConfMan.registerDefault("bloom_strength", 0);  // percent, 0 = off
+	ConfMan.registerDefault("bloom_threshold", 70);// percent luminance cutoff
+	ConfMan.registerDefault("auto_scene_post", true); // derive per-scene defaults
+	ConfMan.registerDefault("post_master", 100);   // master grade intensity, % (100 = full)
+	// SSAO/DoF use the real GL depth buffer (includes the character) rather than
+	// the background depth mask. Confirmed working on Apple GL-over-Metal (the
+	// earlier "hang" was the pause-key bug); mask is the fallback if a stack
+	// rejects the depth copy.
+	ConfMan.registerDefault("enable_depth_copy", true);
+	// Stamp floor-positioned foreground sprites (furniture, doors) that lack a
+	// per-pixel depth map into the depth buffer at their camera distance, so the
+	// post pass sees them at true depth instead of the background behind them.
+	// Depth-only (never changes colour), so it is safe to leave on.
+	ConfMan.registerDefault("enable_sprite_depth", true);
+	// Take the sprite depth further: also write it during the colour render (with
+	// a depth test) so characters are occluded per-pixel by flat foreground props
+	// and walls, instead of whole-sprite draw order. Off by default - it changes
+	// actual rendering, so it is opt-in until validated per scene.
+	ConfMan.registerDefault("enable_sprite_occlusion", false);
 	ConfMan.registerDefault(_intKey[kSaveLoadPage], 0);
 	ConfMan.registerDefault("replacement_png_premultiply_alpha", false);
 	ConfMan.registerDefault("debug_show_depth", false);
+	ConfMan.registerDefault("post_debug_view", 0);   // 0=off,1=depth,2=dyn mask,3=bg mask
 	ConfMan.registerDefault("debug_show_normals", false);
 	ConfMan.registerDefault("scene_lighting_strength", 60);   // percent
+	// Lowest the ambient-matching may dim a character (percent). Lower = the
+	// character goes darker in dark rooms (less "spotlit"); higher = more
+	// readable but can look lit independently of a dark scene.
+	ConfMan.registerDefault("character_min_light", 40);
 	ConfMan.registerDefault("marker_scale", 100);          // percent
 	ConfMan.registerDefault("marker_colorblind", false);
 	ConfMan.registerDefault("subtitle_scale", 100);        // percent

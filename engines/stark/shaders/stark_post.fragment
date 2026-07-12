@@ -9,17 +9,44 @@ uniform float time;
 uniform float magnify;        // 1.0 = off; >1 zooms in for inspection
 uniform vec2 magnifyCenter;   // UV point the zoom is centered on (cursor)
 
-// Depth of field
+// Depth of field + contact AO read depthTex, which is either the packed
+// background depth mask (depthMode 0) or the real GL depth buffer (depthMode 1).
 uniform float dofStrength;   // 0 = off; max blur radius in texels
 uniform float dofFocus;      // eye-space focus distance
 uniform float dofRange;      // eye-space distance over which focus falls off
-uniform float dofNear;       // camera near clip
-uniform float dofFar;        // camera far clip
+uniform float depthZMin;     // eye-space depth encoded at 0 (mask mode)
+uniform float depthZMax;     // eye-space depth encoded at 1 (mask mode)
+uniform float depthNear;     // camera near clip (GL depth mode)
+uniform float depthFar;      // camera far clip (GL depth mode)
+uniform float depthMode;     // 0 = packed mask, 1 = GL window depth
 
-float linearizeDepth(float d) {
-	// window depth [0,1] -> eye-space distance
-	float ndc = d * 2.0 - 1.0;
-	return (2.0 * dofNear * dofFar) / (dofFar + dofNear - ndc * (dofFar - dofNear));
+// Background depth mask (no character) on a second unit, used only to tell
+// dynamic occluders (character/props) from static pre-rendered background edges.
+uniform sampler2D bgDepthTex;
+uniform float ssaoDynamicOnly;  // 1 = contact mode (character/background separated)
+uniform float debugView;        // 0 = off; 1 = GL depth, 2 = dynamic mask, 3 = bg mask
+
+float sceneDepth(vec2 uv) {
+	if (depthMode > 0.5) {
+		// Real GL depth buffer: window depth [0,1] -> eye-space distance.
+		float w = texture(depthTex, uv).r;
+		float ndc = w * 2.0 - 1.0;
+		return (2.0 * depthNear * depthFar) / (depthFar + depthNear - ndc * (depthFar - depthNear));
+	}
+	// Background depth mask: 16-bit R(high)/G(low) packed eye-space depth.
+	vec4 d = texture(depthTex, uv);
+	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
+	return mix(depthZMin, depthZMax, norm);
+}
+
+// Eye-space depth of the baked background at uv (the character is never in it).
+// The mask is a top-origin loaded texture, whereas sceneTex / depthTex are copied
+// from the bottom-origin framebuffer, so its V must be flipped to line the two
+// depth sources up at the same screen point.
+float bgDepth(vec2 uv) {
+	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y));
+	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
+	return mix(depthZMin, depthZMax, norm);
 }
 
 // Color grading
@@ -33,6 +60,15 @@ uniform float vignetteStrength;
 uniform float grainStrength;
 uniform float sharpenStrength;
 
+// Screen-space contact ambient occlusion (depth-only, no normals)
+uniform float ssaoStrength;   // 0 = off
+uniform float ssaoRadius;     // sample radius in texels
+
+// Filmic tonemap + bloom
+uniform float tonemapStrength; // 0 = off, 1 = full ACES filmic
+uniform float bloomStrength;   // 0 = off
+uniform float bloomThreshold;  // luminance cutoff for what blooms
+
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -43,12 +79,112 @@ void main() {
 	vec2 uv = (magnify > 1.0) ? (magnifyCenter + (Texcoord - magnifyCenter) / magnify) : Texcoord;
 
 	vec3 color = texture(sceneTex, uv).rgb;
+	float ssaoDark = 0.0;   // AO darkening applied this pixel (for debug view 4)
+
+	// Diagnostic overlays (setInt post_debug_view 1..4):
+	//   1 = GL scene depth (near = white, far = black) - should show the character
+	//   2 = dynamic classification: RED = detected as character/prop (skipped by
+	//       contact AO), GREEN = static background (receives contact AO)
+	//   3 = background depth mask (near = white) - black/flat means no mask bound
+	//   4 = SSAO term itself (red = where contact AO darkens the image)
+	if (debugView > 0.5 && debugView < 3.5) {
+		float cz = sceneDepth(uv);
+		if (debugView < 1.5) {
+			float n = clamp((cz - depthNear) / max(depthFar - depthNear, 1.0), 0.0, 1.0);
+			outColor = vec4(vec3(1.0 - n), 1.0);
+		} else if (debugView < 2.5) {
+			float cbg = bgDepth(uv);
+			float dynv = smoothstep(0.03, 0.10, (cbg - cz) / max(cbg, 1.0));
+			outColor = vec4(dynv, 1.0 - dynv, 0.0, 1.0);
+		} else {
+			float cbg = bgDepth(uv);
+			float n = clamp((cbg - depthZMin) / max(depthZMax - depthZMin, 1.0), 0.0, 1.0);
+			outColor = vec4(vec3(1.0 - n), 1.0);
+		}
+		return;
+	}
+
+	// Contact ambient occlusion, depth-only. Thresholds scale with distance so it
+	// works across scenes.
+	if (ssaoStrength > 0.0) {
+		float cz = sceneDepth(uv);
+		float occ = 0.0;
+
+		if (ssaoDynamicOnly > 0.5) {
+			// CONTACT mode: darken only STATIC background pixels (floor, walls)
+			// that lie just behind a DYNAMIC occluder - the character or a 3D
+			// prop. This grounds characters into the scene. Crucially it does NOT
+			// self-shade the character: her body carries no AO, so nothing bleeds
+			// onto a foreground sprite drawn over her that never wrote depth
+			// (e.g. a stool in front of April). Static background edges are also
+			// skipped, since the pre-rendered art already shades them.
+			// The receiver's TRUE depth is the unbiased background mask value
+			// (the GL depth carries the occlusion "push-back" bias, which would
+			// otherwise weaken true contact). cbg is used for the contact test.
+			float cbg = bgDepth(uv);
+			float centerDyn = smoothstep(0.03, 0.10, (cbg - cz) / max(cbg, 1.0));
+			if (centerDyn < 0.5) {
+				for (int i = 0; i < 16; i++) {
+					float ang = (float(i) / 16.0) * 6.2831853 + hash(uv * 1.7) * 6.2831853;
+					float rad = (i < 8) ? 0.5 : 1.0;
+					vec2 suv = uv + vec2(cos(ang), sin(ang)) * rad * ssaoRadius * texelSize;
+					float sz = sceneDepth(suv);
+					float sbg = bgDepth(suv);
+					// Is the neighbour a dynamic object standing in front of its
+					// own background? Only such occluders cast a contact shadow.
+					float sampleDyn = smoothstep(0.03, 0.10, (sbg - sz) / max(sbg, 1.0));
+					// Gap between this surface (true depth cbg) and the occluder.
+					float diff = cbg - sz;           // > 0: neighbour is nearer
+					if (diff > cbg * 0.003) {
+						// A real ground contact is a SMALL gap (the character right
+						// where it meets the floor). A dynamic occluder that is much
+						// nearer than this surface is floating in front of it - a
+						// foreground sprite/wall that wrote no depth, or the far wall
+						// behind a character standing mid-room - and must NOT receive
+						// a contact shadow, or its silhouette bleeds onto/through
+						// that surface. Keep the band tight so only true contact
+						// shades; use the Contact AO master to dial visibility.
+						float contact = 1.0 - smoothstep(cbg * 0.03, cbg * 0.18, diff);
+						occ += sampleDyn * contact;
+					}
+				}
+				occ /= 16.0;
+				occ = pow(occ, 0.5);              // lift: shallow pools still read
+			}
+		} else {
+			// FALLBACK (no character/background separation): plain crease AO whose
+			// large gaps fade fully, to limit haloing on static geometry edges.
+			for (int i = 0; i < 16; i++) {
+				float ang = (float(i) / 16.0) * 6.2831853 + hash(uv * 1.7) * 6.2831853;
+				float rad = (i < 8) ? 0.5 : 1.0;
+				vec2 suv = uv + vec2(cos(ang), sin(ang)) * rad * ssaoRadius * texelSize;
+				float sz = sceneDepth(suv);
+				float diff = cz - sz;
+				if (diff > cz * 0.01) {
+					float range = cz * 0.5;
+					occ += clamp(1.0 - (diff - range) / range, 0.0, 1.0);
+				}
+			}
+			occ /= 16.0;
+			occ = pow(occ, 0.75);
+		}
+
+		ssaoDark = ssaoStrength * occ;
+		color *= 1.0 - ssaoDark;
+	}
+
+	// Debug view 4: show the contact-AO term on its own (red = darkened).
+	if (debugView > 3.5) {
+		outColor = vec4(clamp(ssaoDark * 4.0, 0.0, 1.0), clamp(ssaoDark * 1.2, 0.0, 1.0), 0.0, 1.0);
+		return;
+	}
 
 	// Depth of field: blur by distance from the focus plane. A cheap disc of
 	// samples whose spread grows with the circle of confusion.
 	if (dofStrength > 0.0) {
-		float zEye = linearizeDepth(texture(depthTex, uv).r);
+		float zEye = sceneDepth(uv);
 		float coc = clamp(abs(zEye - dofFocus) / max(dofRange, 0.001), 0.0, 1.0);
+		coc = coc * coc;   // gentler ramp: keep the near-focus zone sharp longer
 		float radius = coc * dofStrength;
 
 		if (radius > 0.5) {
@@ -63,6 +199,22 @@ void main() {
 			}
 			color = sum / count;
 		}
+	}
+
+	// Bloom: bleed bright areas (above the threshold) into their surroundings.
+	// Single flat loop (no nesting) - Apple's legacy GLSL compiler mishandles
+	// nested loops. Two rings are covered by varying the radius within one loop.
+	if (bloomStrength > 0.0) {
+		vec3 b = vec3(0.0);
+		for (int i = 0; i < 16; i++) {
+			float ang = (float(i) / 8.0) * 6.2831853;   // 8 angles, repeated
+			float rad = (i < 8) ? 3.0 : 6.0;             // inner ring, then outer
+			vec2 offs = vec2(cos(ang), sin(ang)) * rad * texelSize;
+			vec3 s = texture(sceneTex, uv + offs).rgb;
+			float lum = dot(s, vec3(0.299, 0.587, 0.114));
+			b += s * max(lum - bloomThreshold, 0.0);
+		}
+		color += (b / 16.0) * bloomStrength;
 	}
 
 	// Unsharp-mask sharpening: boost the difference from the local average
@@ -81,6 +233,13 @@ void main() {
 	float luma = dot(color, vec3(0.299, 0.587, 0.114));
 	color = mix(vec3(luma), color, gradeSaturation);
 	color *= gradeTint;
+
+	// Filmic tonemapping (ACES approximation): richer rolloff in highlights.
+	if (tonemapStrength > 0.0) {
+		vec3 x = color;
+		vec3 aces = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+		color = mix(color, aces, tonemapStrength);
+	}
 
 	// Vignette: darken toward the corners
 	if (vignetteStrength > 0.0) {

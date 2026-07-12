@@ -60,9 +60,14 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	// Destination rectangle with given width and height
 	_gfx->start2DMode();
 
-	bool useDepth = _depthBitmap != nullptr &&
-	                StarkSettings->getBoolSetting(Settings::kDepthMaps);
-	OpenGL::Shader *shader = useDepth ? _shaderDepth : _shader;
+	bool depthMapsOn = StarkSettings->getBoolSetting(Settings::kDepthMaps);
+	bool useDepth = _depthBitmap != nullptr && depthMapsOn;
+	// Flat occlusion: no per-pixel depth map, but a plane depth was set for this
+	// sprite (a floor-positioned foreground image) and per-pixel sprite occlusion
+	// is enabled. Draw with the depth shader in flat mode so 3D items are occluded
+	// per-pixel by this sprite's plane instead of by whole-sprite draw order.
+	bool useFlat = !useDepth && _flatDepth > 0.0f && depthMapsOn;
+	OpenGL::Shader *shader = (useDepth || useFlat) ? _shaderDepth : _shader;
 
 	shader->use();
 	shader->setUniform1f("fadeLevel", _fadeLevel);
@@ -80,6 +85,7 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	if (useDepth) {
 		shader->setUniform("tex", 0);
 		shader->setUniform("depthTex", 1);
+		shader->setUniform("flatDepth", 0);
 		shader->setUniform("debugShowDepth", ConfMan.getBool("debug_show_depth") ? 1 : 0);
 		shader->setUniform1f("depthZMin", _depthZMin);
 		shader->setUniform1f("depthZMax", _depthZMax);
@@ -96,6 +102,10 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		// Publish this background's depth range for the depth fog
 		StarkScene->setBackgroundDepthRange(_depthZMin, _depthZMax);
 
+		// Hand the depth mask to the post pass so SSAO / DoF can sample it
+		// (a normal texture) instead of copying the GL depth buffer.
+		_gfx->setWorldDepth(_depthBitmap, _depthZMin, _depthZMax);
+
 		glActiveTexture(GL_TEXTURE1);
 		_depthBitmap->bind();
 		glActiveTexture(GL_TEXTURE0);
@@ -107,12 +117,30 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		glEnable(GL_DEPTH_TEST);
 		glDepthFunc(GL_LEQUAL);
 		glDepthMask(GL_TRUE);
+	} else if (useFlat) {
+		shader->setUniform("tex", 0);
+		shader->setUniform("depthTex", 1);
+		shader->setUniform("flatDepth", 1);
+		shader->setUniform1f("flatDepthEye", _flatDepth);
+		shader->setUniform("debugShowDepth", 0);
+		shader->setUniform1f("depthZMin", 0.0f);
+		shader->setUniform1f("depthZMax", 1.0f);
+		shader->setUniform1f("depthBias", 0.0f);
+		shader->setUniform1f("nearClip", StarkScene->getNearClipPlane());
+		shader->setUniform1f("farClip", StarkScene->getFarClipPlane());
+
+		// Write the plane depth (with an alpha discard in the shader) and depth-
+		// test so this sprite occludes / is occluded per-pixel like a depth-mapped
+		// prop, rather than winning or losing wholesale by paint order.
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LEQUAL);
+		glDepthMask(GL_TRUE);
 	}
 
 	bitmap->bind();
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-	if (useDepth) {
+	if (useDepth || useFlat) {
 		glDepthFunc(GL_LESS);
 		glDepthMask(GL_FALSE);
 		glDisable(GL_DEPTH_TEST);
@@ -144,6 +172,56 @@ void OpenGLSSurfaceRenderer::fill(const Color &color, const Common::Point &dest,
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
 	_shaderFill->unbind();
+	_gfx->end2DMode();
+}
+
+void OpenGLSSurfaceRenderer::stampDepthPlane(const Bitmap *bitmap, const Common::Point &dest, uint width, uint height, float eyeDepth) {
+	_gfx->start2DMode();
+
+	_shaderDepth->use();
+	_shaderDepth->setUniform1f("fadeLevel", 0.0f);
+	_shaderDepth->setUniform("snapToGrid", _snapToGrid ? 1 : 0);
+	_shaderDepth->setUniform("verOffsetXY", offsetVertex(dest));
+	if (_noScalingOverride) {
+		_shaderDepth->setUniform("verSizeWH", normalizeCurrentCoordinates(width, height));
+	} else {
+		_shaderDepth->setUniform("verSizeWH", normalizeOriginalCoordinates(width, height));
+	}
+
+	Common::Rect nativeViewport = _gfx->getViewport();
+	_shaderDepth->setUniform("viewport", Math::Vector2d(nativeViewport.width(), nativeViewport.height()));
+
+	_shaderDepth->setUniform("tex", 0);
+	_shaderDepth->setUniform("debugShowDepth", 0);
+	_shaderDepth->setUniform("flatDepth", 1);
+	_shaderDepth->setUniform1f("flatDepthEye", eyeDepth);
+	_shaderDepth->setUniform1f("depthZMin", 0.0f);
+	_shaderDepth->setUniform1f("depthZMax", 1.0f);
+	_shaderDepth->setUniform1f("depthBias", 0.0f);
+	_shaderDepth->setUniform1f("nearClip", StarkScene->getNearClipPlane());
+	_shaderDepth->setUniform1f("farClip", StarkScene->getFarClipPlane());
+
+	// Depth-only: write the plane depth wherever the sprite is opaque, but touch
+	// no colour (the frame is already composited). LEQUAL so a sprite only stamps
+	// where it is at or nearer than what is already there - it never overwrites a
+	// character (or nearer sprite) that is drawn in front of it, which would
+	// corrupt that surface's depth for the post pass.
+	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glDepthMask(GL_TRUE);
+
+	bitmap->bind();
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	_gfx->recordSpriteStamp(eyeDepth);
+
+	// Restore the default 2D state (depth off, colour on).
+	glDepthMask(GL_FALSE);
+	glDepthFunc(GL_LESS);
+	glDisable(GL_DEPTH_TEST);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+	_shaderDepth->unbind();
 	_gfx->end2DMode();
 }
 

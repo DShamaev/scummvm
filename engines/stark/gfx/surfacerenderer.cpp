@@ -33,7 +33,8 @@ SurfaceRenderer::SurfaceRenderer() :
 		_depthBitmap(nullptr),
 		_depthZMin(0.0f),
 		_depthZMax(1.0f),
-		_depthBias(-1.0f) {
+		_depthBias(-1.0f),
+		_flatDepth(0.0f) {
 }
 
 SurfaceRenderer::~SurfaceRenderer() {

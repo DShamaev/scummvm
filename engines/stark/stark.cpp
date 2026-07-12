@@ -224,6 +224,17 @@ void StarkEngine::processEvents() {
 				continue;
 			}
 
+			// 'g': toggle post-processing on/off for quick A/B visual comparison.
+			// Must be a key the keymap does not claim (F8=screenshot, p=pause, ...),
+			// so it arrives as a raw key like the magnifier's bracket keys.
+			if (e.type == Common::EVENT_KEYDOWN && e.kbd.keycode == Common::KEYCODE_g) {
+				bool on = !ConfMan.getBool("enable_post_processing");
+				ConfMan.setBool("enable_post_processing", on);
+				ConfMan.flushToDisk();
+				warning("Stark: post-processing %s", on ? "ON" : "OFF");
+				continue;
+			}
+
 			if (e.customType == kActionPause) {
 				if (StarkUserInterface->isInGameScreen()) {
 					_gamePauseToken = pauseEngine();
@@ -266,13 +277,6 @@ void StarkEngine::updateDisplayScene() {
 		StarkGlobal->setMillisecondsPerGameloop(_frameLimiter->getLastFrameDuration());
 	}
 
-	// Render the in-game world through the post-processing buffer.
-	// Menus render directly so they are not grain/vignette-affected.
-	bool postProcessing = false;
-	if (StarkUserInterface->isInGameScreen()) {
-		postProcessing = StarkGfx->beginPostProcess();
-	}
-
 	// Clear the screen
 	StarkGfx->clearScreen();
 
@@ -300,13 +304,13 @@ void StarkEngine::updateDisplayScene() {
 	// Tell the UI to render, and update implicitly, if this leads to new mouse-over events.
 	StarkUserInterface->render();
 
-	// Composite the post-processed frame to the screen
-	if (postProcessing) {
-		StarkGfx->endPostProcess();
+	// Screen-space post-processing (grade/vignette/grain/sharpen/magnifier).
+	// Run at end of frame, after the render pass is composited - copying the
+	// framebuffer mid-pass stalls Apple's tile GPU. It restricts itself to the
+	// 3D game-viewport region, so the UI border strips are not graded.
+	if (StarkUserInterface->isInGameScreen()) {
+		StarkGfx->applyPostProcess();
 	}
-
-	// Detail magnifier overlay (no-op unless the 'magnify' setting is active)
-	StarkGfx->renderMagnifier();
 }
 
 static bool modsCompare(const Common::FSNode &a, const Common::FSNode &b) {

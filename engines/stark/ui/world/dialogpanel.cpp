@@ -42,17 +42,17 @@ namespace Stark {
 DialogPanel::DialogPanel(Gfx::Driver *gfx, Cursor *cursor) :
 		Window(gfx, cursor),
 		_subtitleVisual(nullptr),
-		_currentSpeech(nullptr),
 		_scrollUpArrowVisible(false),
 		_scrollDownArrowVisible(false),
-		_firstVisibleOption(0),
-		_lastVisibleOption(0),
-		_focusedOption(0),
-		_acceptIdleMousePos(false),
+		_currentSpeech(nullptr),
 		_subtitleShownAt(0),
 		_subtitleScrollTotalMs(0),
 		_subtitleScrollLastMs(0),
-		_subtitleScrollPos(0.0f) {
+		_subtitleScrollPos(0.0f),
+		_firstVisibleOption(0),
+		_lastVisibleOption(0),
+		_focusedOption(0),
+		_acceptIdleMousePos(false) {
 	_position = Common::Rect(Gfx::Driver::kOriginalWidth, Gfx::Driver::kBottomBorderHeight);
 	_position.translate(0, Gfx::Driver::kTopBorderHeight + Gfx::Driver::kGameViewportHeight);
 

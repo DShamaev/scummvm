@@ -115,11 +115,30 @@ public:
 	virtual void endPostProcess() {}
 
 	/**
-	 * Detail magnifier: when the 'magnify' setting is > 100, copy the finished
-	 * frame and redraw it zoomed around the cursor. Independent of the post
-	 * buffer so it works even where post-processing is disabled/unstable.
+	 * Screen-space post-processing pass over the CURRENT viewport region: copy
+	 * that region from the back buffer and redraw it through the post shader
+	 * (colour grade, vignette, grain, sharpen, depth-of-field, cursor magnifier).
+	 * Copying instead of rendering into an FBO keeps it working on GL stacks
+	 * whose FBO path is unstable. Called from the game window so it affects only
+	 * the 3D world, not the UI drawn around/after it.
 	 */
-	virtual void renderMagnifier() {}
+	virtual void applyPostProcess() {}
+
+	/**
+	 * Report the depth state used by the last post-process pass, for diagnostics:
+	 * whether the GL depth buffer was copied (character-aware depth), whether the
+	 * background depth mask was available, and whether contact-mode SSAO (which
+	 * needs both) was therefore active.
+	 */
+	virtual void getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const {
+		glDepthCopy = worldMask = contactMode = false;
+	}
+
+	/** Diagnostics: number and eye-depth range of foreground sprite depth stamps. */
+	virtual void getSpriteStampInfo(int &count, float &minEye, float &maxEye) const {
+		count = 0;
+		minEye = maxEye = 0.0f;
+	}
 
 	/** Checks if a screenpoint coord is within window bounds */
 	bool isPosInScreenBounds(const Common::Point &point) const;

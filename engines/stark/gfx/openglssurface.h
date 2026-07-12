@@ -50,6 +50,7 @@ public:
 	void render(const Bitmap *bitmap, const Common::Point &dest) override;
 	void render(const Bitmap *bitmap, const Common::Point &dest, uint width, uint height) override;
 	void fill(const Color &color, const Common::Point &dest, uint width, uint height) override;
+	void stampDepthPlane(const Bitmap *bitmap, const Common::Point &dest, uint width, uint height, float eyeDepth) override;
 
 private:
 	Math::Vector2d normalizeOriginalCoordinates(int x, int y) const;

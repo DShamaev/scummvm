@@ -184,6 +184,15 @@ void VisualImageXMG::renderScaledToSize(const Common::Point &position, uint widt
 	_surfaceRenderer->render(_bitmap, position, width, height);
 }
 
+void VisualImageXMG::stampDepth(const Common::Point &position, bool useOffset, float eyeDepth) {
+	Common::Point drawPos = useOffset ? position - _hotspot : position;
+	_surfaceRenderer->stampDepthPlane(_bitmap, drawPos, _originalWidth, _originalHeight, eyeDepth);
+}
+
+void VisualImageXMG::setOcclusionDepth(float eyeDepth) {
+	_surfaceRenderer->setFlatDepth(eyeDepth);
+}
+
 void VisualImageXMG::setFadeLevel(float fadeLevel) {
 	_surfaceRenderer->setFadeLevel(fadeLevel);
 }

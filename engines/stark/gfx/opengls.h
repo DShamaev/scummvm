@@ -78,7 +78,22 @@ public:
 	 */
 	bool beginPostProcess();
 	void endPostProcess();
-	void renderMagnifier() override;
+	void applyPostProcess() override;
+
+	/**
+	 * Register the current location's background depth-mask texture (a normal
+	 * texture, already loaded for depth occlusion) so the post pass can sample
+	 * it for SSAO / depth-of-field - avoiding a GL depth-buffer copy, which
+	 * hangs on Apple's GL-over-Metal stack.
+	 */
+	void setWorldDepth(const Bitmap *depth, float zMin, float zMax);
+
+	void getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const override;
+
+	/** Record a sprite depth-stamp (eye-space) this frame, for diagnostics. */
+	void recordSpriteStamp(float eyeDepth);
+	/** Report last frame's stamp count and eye-depth range (postInfo). */
+	void getSpriteStampInfo(int &count, float &minEye, float &maxEye) const override;
 
 	Common::Rect getViewport() const;
 	Common::Rect getUnscaledViewport() const;
@@ -109,10 +124,36 @@ private:
 	bool _postActive;
 	int _renderScale;   // supersample factor for the in-game FBO (1 = off)
 
-	// Detail magnifier (framebuffer copy, independent of the post FBO)
+	// Copy-path post-processing + detail magnifier. Instead of rendering the
+	// scene into an FBO (which hangs on Apple's GL-over-Metal stack), the frame
+	// is drawn normally then copied from the back buffer into these textures and
+	// run through the post shader. Depth is copied too for depth-of-field, but
+	// only if this GL stack accepts the copy - otherwise DoF disables itself.
 	GLuint _magTex;
 	int _magWidth;
 	int _magHeight;
+
+	// The current location's background depth-mask texture (owned elsewhere),
+	// sampled by SSAO / DoF. Reset each frame; only set when a depth map exists.
+	const Bitmap *_worldDepthBitmap;
+	float _worldDepthZMin;
+	float _worldDepthZMax;
+	// Optional GL depth-buffer copy (real depth, includes the character), used
+	// when 'enable_depth_copy' is on and the stack accepts it.
+	GLuint _postDepthCopyTex;
+
+	// Diagnostics: state of the last post pass' depth setup (read by postInfo).
+	bool _postDbgGLDepth;
+	bool _postDbgWorldMask;
+	bool _postDbgContact;
+
+	// Diagnostics: foreground sprite depth stamps this frame.
+	int _spriteStampCount;
+	int _spriteStampCountFrame;   // accumulates during a frame, published on clear
+	float _spriteStampMinEye;
+	float _spriteStampMaxEye;
+	float _spriteStampMinEyeFrame;
+	float _spriteStampMaxEyeFrame;
 
 	void ensurePostResources(int width, int height);
 	void freePostResources();

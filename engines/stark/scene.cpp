@@ -23,7 +23,15 @@
 
 #include "engines/stark/gfx/driver.h"
 #include "engines/stark/gfx/renderentry.h"
+#include "engines/stark/services/services.h"
+#include "engines/stark/services/global.h"
+#include "engines/stark/resources/level.h"
+#include "engines/stark/resources/location.h"
 
+#include "common/config-manager.h"
+#include "common/debug.h"
+#include "common/file.h"
+#include "common/formats/json.h"
 #include "common/system.h"
 
 #include "math/glmath.h"
@@ -41,7 +49,8 @@ Scene::Scene(Gfx::Driver *gfx) :
 		_maxShadowLength(0.075f),
 		_bgDepthZMin(0.0f),
 		_bgDepthZMax(0.0f),
-		_focusDepth(0.0f) {
+		_focusDepth(0.0f),
+		_scenePostLoaded(false) {
 }
 
 Scene::~Scene() {
@@ -180,6 +189,81 @@ float Scene::getFloatOffset() const {
 void Scene::setupShadows(bool enabled, float length) {
 	_shouldRenderShadows = enabled;
 	_maxShadowLength = length;
+}
+
+Common::String Scene::currentLocationKey() const {
+	Current *current = StarkGlobal->getCurrent();
+	if (!current) {
+		return "";
+	}
+	Resources::Level *level = current->getLevel();
+	Resources::Location *location = current->getLocation();
+	if (!level || !location) {
+		return "";
+	}
+	return Common::String::format("%02x/%02x", level->getIndex(), location->getIndex());
+}
+
+void Scene::loadScenePost() {
+	_scenePostLoaded = true;
+
+	Common::File file;
+	if (!file.open("post_scenes.json")) {
+		return; // optional data file
+	}
+	Common::String text;
+	while (!file.eos()) {
+		text += file.readLine();
+		text += '\n';
+	}
+	file.close();
+
+	Common::JSONValue *root = Common::JSON::parse(text.c_str());
+	if (!root || !root->isObject()) {
+		delete root;
+		return;
+	}
+
+	const Common::JSONObject &scenes = root->asObject();
+	for (Common::JSONObject::const_iterator it = scenes.begin(); it != scenes.end(); ++it) {
+		if (!it->_value->isObject()) {
+			continue;
+		}
+		PostMap values;
+		const Common::JSONObject &entry = it->_value->asObject();
+		for (Common::JSONObject::const_iterator v = entry.begin(); v != entry.end(); ++v) {
+			if (v->_value->isIntegerNumber()) {
+				values[v->_key] = (int)v->_value->asIntegerNumber();
+			} else if (v->_value->isNumber()) {
+				values[v->_key] = (int)v->_value->asNumber();
+			}
+		}
+		_scenePost[it->_key] = values;
+	}
+	delete root;
+	debug(1, "Scene: loaded per-scene post settings for %u location(s)", (uint)_scenePost.size());
+}
+
+int Scene::getPostSetting(const char *key) {
+	int globalValue = ConfMan.getInt(key);
+	if (!ConfMan.getBool("auto_scene_post")) {
+		return globalValue;
+	}
+	if (!_scenePostLoaded) {
+		loadScenePost();
+	}
+	if (_scenePost.empty()) {
+		return globalValue;
+	}
+	Common::String loc = currentLocationKey();
+	if (loc.empty() || !_scenePost.contains(loc)) {
+		return globalValue;
+	}
+	const PostMap &values = _scenePost[loc];
+	if (values.contains(key)) {
+		return values[key];
+	}
+	return globalValue;
 }
 
 } // End of namespace Stark

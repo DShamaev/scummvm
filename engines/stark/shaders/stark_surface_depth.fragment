@@ -20,6 +20,13 @@ uniform float farClip;
 // character (floor over feet, back wall eating the body).
 uniform float depthBias;
 
+// Flat-depth mode: instead of sampling a per-pixel depth map, stamp a single
+// constant eye-space depth for the whole surface (used for floor-positioned
+// sprites that have no depth map, so they still occupy the depth buffer for
+// post-processing). No bias is applied in this mode.
+uniform UBOOL flatDepth;
+uniform float flatDepthEye;
+
 float depthAt(vec2 uv) {
 	vec4 depthSample = texture(depthTex, uv);
 	float depthNorm = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
@@ -37,15 +44,23 @@ void main() {
 
 	outColor = texColor + vec4(fadeLevel, fadeLevel, fadeLevel, 0) * texColor.a;
 
-	// 16 bit eye space depth is packed in the R (high) and G (low) channels
-	float zEye = depthAt(uv);
-	float depthNorm = (zEye - depthZMin) / max(depthZMax - depthZMin, 0.001);
+	float zEye;
+	float depthNorm;
+	if (UBOOL_TEST(flatDepth)) {
+		// Single plane depth for the whole opaque sprite.
+		zEye = max(flatDepthEye, nearClip);
+		depthNorm = (zEye - depthZMin) / max(depthZMax - depthZMin, 0.001);
+	} else {
+		// 16 bit eye space depth is packed in the R (high) and G (low) channels
+		zEye = depthAt(uv);
+		depthNorm = (zEye - depthZMin) / max(depthZMax - depthZMin, 0.001);
 
-	// Push the scene away from the camera by a fixed fraction of the depth
-	// range. An additive bias helps uniformly at all depths - unlike a
-	// multiplicative one, it also lifts the near floor off the character's
-	// feet - so the character is only occluded by clearly closer geometry.
-	zEye = max(zEye + (depthZMax - depthZMin) * depthBias, nearClip);
+		// Push the scene away from the camera by a fixed fraction of the depth
+		// range. An additive bias helps uniformly at all depths - unlike a
+		// multiplicative one, it also lifts the near floor off the character's
+		// feet - so the character is only occluded by clearly closer geometry.
+		zEye = max(zEye + (depthZMax - depthZMin) * depthBias, nearClip);
+	}
 
 	// Convert eye space distance to window space depth, matching the
 	// standard perspective projection used when rendering the 3D items

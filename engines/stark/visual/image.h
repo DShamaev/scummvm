@@ -75,6 +75,22 @@ public:
 	void render(const Common::Point &position, bool useOffset);
 	void render(const Common::Point &position, bool useOffset, bool unscaled);
 
+	/** True if this image carries a per-pixel depth map (already writes depth) */
+	bool hasDepthMap() const { return _depthBitmap != nullptr; }
+
+	/**
+	 * Stamp a single constant eye-space depth for this image into the depth
+	 * buffer (no colour), so a floor-positioned sprite without a depth map still
+	 * occupies the depth buffer for the post-processing pass.
+	 */
+	void stampDepth(const Common::Point &position, bool useOffset, float eyeDepth);
+
+	/**
+	 * Set a constant eye-space plane depth used by the next render() so a flat
+	 * sprite occludes 3D items per-pixel via the depth buffer. 0 disables it.
+	 */
+	void setOcclusionDepth(float eyeDepth);
+
 	/** Render the image stretched to an explicit width and height */
 	void renderScaledToSize(const Common::Point &position, uint width, uint height);
 

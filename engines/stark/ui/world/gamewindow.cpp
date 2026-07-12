@@ -201,6 +201,17 @@ void GameWindow::onRender() {
 		element++;
 	}
 
+	// Depth pass: stamp foreground sprites (floor-positioned images without a
+	// per-pixel depth map) into the depth buffer at their camera distance. This
+	// writes depth only - the colour frame is already composited and untouched -
+	// so the post-processing pass sees these sprites at their true depth instead
+	// of the background behind them (fixes SSAO/DoF bleeding through them).
+	if (ConfMan.getBool("enable_sprite_depth")) {
+		for (element = _renderEntries.begin(); element != _renderEntries.end(); element++) {
+			(*element)->stampDepth();
+		}
+	}
+
 	if (_displayExit) {
 		Common::Array<Common::Point> exitPositions = StarkGameInterface->listExitPositions();
 

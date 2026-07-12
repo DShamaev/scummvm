@@ -54,6 +54,15 @@ public:
 	virtual void fill(const Color &color, const Common::Point &dest, uint width, uint height) = 0;
 
 	/**
+	 * Stamp a single constant eye-space depth for this surface into the depth
+	 * buffer only (no colour is written). Used so floor-positioned sprites that
+	 * lack a per-pixel depth map still occupy the depth buffer, which lets the
+	 * post-processing pass tell them apart from the background behind them.
+	 * Transparent pixels are skipped. Backends without depth support ignore it.
+	 */
+	virtual void stampDepthPlane(const Bitmap *bitmap, const Common::Point &dest, uint width, uint height, float eyeDepth) {}
+
+	/**
 	 * When this is set to true, the texture size is expected to be in current
 	 * coordinates, and is to be drawn without scaling.
 	 *
@@ -95,6 +104,15 @@ public:
 	/** Per-location depth bias, or a negative value to use the global setting */
 	float getDepthBias() const { return _depthBias; }
 
+	/**
+	 * Set a single constant eye-space depth for the next render, used for flat
+	 * foreground sprites that lack a per-pixel depth map. When set (and no depth
+	 * map is bound), supporting renderers write this plane depth with a depth
+	 * test during the colour pass, so 3D items are occluded per-pixel by the
+	 * sprite instead of by whole-sprite draw order. 0 disables it.
+	 */
+	void setFlatDepth(float eyeDepth) { _flatDepth = eyeDepth; }
+
 protected:
 	bool _noScalingOverride;
 	float _fadeLevel;
@@ -106,6 +124,7 @@ protected:
 	float _depthZMin;
 	float _depthZMax;
 	float _depthBias;
+	float _flatDepth;
 };
 
 } // End of namespace Gfx

@@ -112,17 +112,25 @@ private:
 	/** Build each page's widgets */
 	void buildSettingsPage();
 	void buildEnhancementsPage();
+	void buildPostFxPage();
 
-	/** Switch between the two pages, rebuilding the widgets */
+	/** Switch between the pages, rebuilding the widgets */
 	void showEnhancementsPage();
 	void showSettingsPage();
+	void showPostFxPage();
 
 private:
 	const Gfx::Color _textColorHovered = Gfx::Color(0x1E, 0x1E, 0x96);
 	const Gfx::Color _textColorDefault = Gfx::Color(0x00, 0x00, 0x00);
 
+	enum Page {
+		kMainPage,
+		kEnhancementsPage,
+		kPostFxPage
+	};
+
 	TestSoundManager _soundManager;
-	bool _enhancementsPage;
+	Page _page;
 	bool _pendingRebuild;
 };
 

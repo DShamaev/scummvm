@@ -23,6 +23,9 @@
 #define STARK_SCENE_H
 
 #include "common/rect.h"
+#include "common/hashmap.h"
+#include "common/hash-str.h"
+#include "common/str.h"
 
 #include "math/matrix4.h"
 #include "math/ray.h"
@@ -71,6 +74,11 @@ public:
 	 */
 	Common::Point convertPosition3DToGameScreenOriginal(const Math::Vector3d &obj) const;
 
+	/** The scrolled viewport window within the full scene (left/top = scroll). */
+	Common::Rect getSceneViewport() const { return _viewport; }
+	/** The full scene size; larger than the viewport for scrolling locations. */
+	Common::Rect getSceneSize() const { return _viewSize; }
+
 	/** Get and set scene fade level */
 	void setFadeLevel(float fadeLevel);
 	float getFadeLevel() const;
@@ -103,6 +111,16 @@ public:
 	void setFocusDepth(float depth) { _focusDepth = depth; }
 	float getFocusDepth() const { return _focusDepth; }
 
+	/**
+	 * Effective value of a post-processing key for the current scene.
+	 *
+	 * When 'auto_scene_post' is enabled and the current location has an entry in
+	 * the optional 'post_scenes.json' data file, its per-scene value is returned;
+	 * otherwise the global ConfMan value is used. This lets the post effects
+	 * (ssao/tonemap/bloom/grade) be tuned per background automatically.
+	 */
+	int getPostSetting(const char *key);
+
 	/** Access the maximum length of the horizontal light direction for casting shadows */
 	void setupShadows(bool enabled, float length);
 	bool shouldRenderShadows() const { return _shouldRenderShadows; }
@@ -133,6 +151,13 @@ private:
 	float _bgDepthZMin;
 	float _bgDepthZMax;
 	float _focusDepth;
+
+	// Per-scene post-processing overrides, loaded once from post_scenes.json.
+	typedef Common::HashMap<Common::String, int> PostMap;
+	Common::HashMap<Common::String, PostMap> _scenePost;
+	bool _scenePostLoaded;
+	void loadScenePost();
+	Common::String currentLocationKey() const;
 };
 
 } // End of namespace Stark

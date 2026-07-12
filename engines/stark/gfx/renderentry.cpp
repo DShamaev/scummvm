@@ -22,6 +22,8 @@
 #include "engines/stark/gfx/renderentry.h"
 #include "engines/stark/gfx/driver.h"
 
+#include "common/config-manager.h"
+
 #include "engines/stark/resources/item.h"
 
 #include "engines/stark/visual/actor.h"
@@ -38,11 +40,12 @@ namespace Stark {
 namespace Gfx {
 
 RenderEntry::RenderEntry(Resources::ItemVisual *owner, const Common::String &name) :
-		_visual(nullptr),
 		_name(name),
 		_owner(owner),
+		_visual(nullptr),
 		_direction3D(0.0),
 		_sortKey(0.0),
+		_stampEyeDepth(0.0),
 		_clickable(true) {
 }
 
@@ -54,7 +57,16 @@ void RenderEntry::render(const LightEntryArray &lights) {
 
 	VisualImageXMG *imageXMG = _visual->get<VisualImageXMG>();
 	if (imageXMG) {
-		imageXMG->render(_position, true);
+		// Optional per-pixel occlusion for flat foreground sprites: write a plane
+		// depth during the colour render so 3D items are clipped by this sprite.
+		float occ = ConfMan.getBool("enable_sprite_occlusion") ? imageEyeDepth(imageXMG) : 0.0f;
+		if (occ > 0.0f) {
+			imageXMG->setOcclusionDepth(occ);
+			imageXMG->render(_position, true);
+			imageXMG->setOcclusionDepth(0.0f);
+		} else {
+			imageXMG->render(_position, true);
+		}
 	}
 
 	VisualActor *actor = _visual->get<VisualActor>();
@@ -91,6 +103,36 @@ void RenderEntry::render(const LightEntryArray &lights) {
 	if (fish) {
 		fish->render(_position);
 	}
+}
+
+float RenderEntry::imageEyeDepth(VisualImageXMG *image) const {
+	// Actors/props (no image) already write real depth; images that carry a
+	// depth map already stamp per-pixel - neither needs a flat plane.
+	if (!image || image->hasDepthMap()) {
+		return 0.0f;
+	}
+
+	// An explicit foreground-plane override (2D overlay layers drawn in front of
+	// the character), else the floor sort-key distance for floor-positioned
+	// 3D-layer sprites. The sort key is the item's eye-space Z, which is NEGATIVE
+	// in front of the camera, so use its magnitude. Un-positioned images (sort
+	// key 0, no override) have no depth.
+	float eye = _stampEyeDepth > 0.0f ? _stampEyeDepth : ABS(_sortKey);
+	return eye > 0.0f ? eye : 0.0f;
+}
+
+void RenderEntry::stampDepth() {
+	if (!_visual) {
+		return;
+	}
+
+	VisualImageXMG *image = _visual->get<VisualImageXMG>();
+	float eye = imageEyeDepth(image);
+	if (eye <= 0.0f) {
+		return;
+	}
+
+	image->stampDepth(_position, true, eye);
 }
 
 void RenderEntry::setVisual(Visual *visual) {

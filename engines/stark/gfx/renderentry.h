@@ -71,6 +71,22 @@ public:
 
 	void render(const LightEntryArray &lights = LightEntryArray());
 
+	/**
+	 * Stamp this entry's flat depth into the depth buffer, but only for a
+	 * floor-positioned image item that has no per-pixel depth map. Lets such
+	 * foreground sprites occupy the depth buffer so post-processing can tell
+	 * them apart from the background. No-op for actors, props, un-positioned
+	 * images, and images that already carry a depth map.
+	 */
+	void stampDepth();
+
+	/**
+	 * Force a specific eye-space depth for stampDepth(), used for 2D foreground
+	 * overlay layers that have no sort-key distance of their own. Positive value
+	 * enables it; 0 (default) falls back to the floor sort key.
+	 */
+	void setStampEyeDepth(float eyeDepth) { _stampEyeDepth = eyeDepth; }
+
 	void setVisual(Visual *visual);
 	void setPosition(const Common::Point &position);
 	void setPosition3D(const Math::Vector3d &position, float direction);
@@ -85,6 +101,10 @@ public:
 
 	/** Gets the entry's name */
 	const Common::String &getName() const { return _name; }
+
+	/** Diagnostics: sort key (camera distance for floor items) and stamp override */
+	float getSortKey() const { return _sortKey; }
+	float getStampEyeDepth() const { return _stampEyeDepth; }
 
 	/** Obtain the underlying image visual, if any */
 	VisualImageXMG *getImage() const;
@@ -115,6 +135,9 @@ public:
 	Common::Rect getBoundingRect() const;
 
 protected:
+	/** Eye-space plane depth to stamp/occlude for a flat image, or 0 if none. */
+	float imageEyeDepth(VisualImageXMG *image) const;
+
 	Common::String _name;
 	Resources::ItemVisual *_owner;
 
@@ -123,6 +146,7 @@ protected:
 	Math::Vector3d _position3D;
 	float _direction3D;
 	float _sortKey;
+	float _stampEyeDepth;
 	bool _clickable;
 };
 

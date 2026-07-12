@@ -36,7 +36,7 @@ namespace Stark {
 SettingsMenuScreen::SettingsMenuScreen(Gfx::Driver *gfx, Cursor *cursor) :
 		StaticLocationScreen(gfx, cursor, "OptionLocation", Screen::kScreenSettingsMenu),
 		_soundManager(),
-		_enhancementsPage(false),
+		_page(kMainPage),
 		_pendingRebuild(false) {
 }
 
@@ -48,19 +48,24 @@ void SettingsMenuScreen::open() {
 	_soundManager.load();
 
 	// Always start on the main settings page
-	_enhancementsPage = false;
+	_page = kMainPage;
 	buildSettingsPage();
 }
 
 void SettingsMenuScreen::showEnhancementsPage() {
 	// Deferred: rebuilding here would free the very widget whose click
 	// handler is running. The actual switch happens in onGameLoop.
-	_enhancementsPage = true;
+	_page = kEnhancementsPage;
 	_pendingRebuild = true;
 }
 
 void SettingsMenuScreen::showSettingsPage() {
-	_enhancementsPage = false;
+	_page = kMainPage;
+	_pendingRebuild = true;
+}
+
+void SettingsMenuScreen::showPostFxPage() {
+	_page = kPostFxPage;
 	_pendingRebuild = true;
 }
 
@@ -266,7 +271,9 @@ void SettingsMenuScreen::buildEnhancementsPage() {
 	_widgets.push_back(new CustomCheckboxWidget(_gfx, "Depth fog", Common::Point(leftX, y), "enable_depth_fog"));
 	_widgets.back()->setupSounds(3, 4);
 	y += step;
-	_widgets.push_back(new CustomCheckboxWidget(_gfx, "Post-processing", Common::Point(leftX, y), "enable_post_processing"));
+	// Post-processing has its own page of intensity controls.
+	_widgets.push_back(new CustomButtonWidget(_gfx, "Post FX >>", Common::Point(leftX, y),
+			CLICK_HANDLER(SettingsMenuScreen, showPostFxPage)));
 	_widgets.back()->setupSounds(3, 4);
 
 	// --- Right column: UI / accessibility toggles and sizes
@@ -301,6 +308,109 @@ void SettingsMenuScreen::buildEnhancementsPage() {
 	_widgets.back()->setupSounds(3, 4);
 }
 
+void SettingsMenuScreen::buildPostFxPage() {
+	_widgets.push_back(new StaticLocationWidget("The Longest Journey", nullptr, nullptr));
+
+	// Back to the Enhancements page
+	_widgets.push_back(new CustomButtonWidget(
+			_gfx, "<< Enhancements", Common::Point(90, 55),
+			CLICK_HANDLER(SettingsMenuScreen, showEnhancementsPage)));
+	_widgets.back()->setupSounds(3, 4);
+
+	_widgets.push_back(new CustomButtonWidget(_gfx, "Post FX", Common::Point(300, 55), nullptr));
+
+	int leftX = 150;
+	Gfx::RenderEntry *anchorEntry = StarkStaticProvider->getLocation()->getRenderEntryByName("AprilHighRes");
+	if (anchorEntry) {
+		leftX = anchorEntry->getPosition().x;
+	}
+	const int rightX = leftX + 215;
+	const int startY = 105, step = 24;
+	int y = startY;
+
+	// Preset value lists (all percent unless noted; 100 = neutral for grade).
+	Common::Array<int> brightnessVals;
+	brightnessVals.push_back(-15); brightnessVals.push_back(0);
+	brightnessVals.push_back(10);  brightnessVals.push_back(20);
+	Common::Array<int> contrastVals;
+	contrastVals.push_back(90);  contrastVals.push_back(100);
+	contrastVals.push_back(108); contrastVals.push_back(115);
+	Common::Array<int> satVals;
+	satVals.push_back(0);   satVals.push_back(80);  satVals.push_back(100);
+	satVals.push_back(115); satVals.push_back(130);
+	Common::Array<int> tonemapVals;
+	tonemapVals.push_back(0);  tonemapVals.push_back(40);
+	tonemapVals.push_back(70); tonemapVals.push_back(100);
+	Common::Array<int> bloomVals;
+	bloomVals.push_back(0);  bloomVals.push_back(25);
+	bloomVals.push_back(50); bloomVals.push_back(100);
+	// Master intensity over the whole colour grade (100 = per-scene as authored).
+	Common::Array<int> masterVals;
+	masterVals.push_back(0);   masterVals.push_back(50);
+	masterVals.push_back(100); masterVals.push_back(150);
+	// Master gain over the per-scene contact-AO strength (100 = as authored).
+	Common::Array<int> ssaoVals;
+	ssaoVals.push_back(0);   ssaoVals.push_back(50);
+	ssaoVals.push_back(100); ssaoVals.push_back(150);
+	Common::Array<int> vignetteVals;
+	vignetteVals.push_back(0);  vignetteVals.push_back(20);
+	vignetteVals.push_back(35); vignetteVals.push_back(50);
+	Common::Array<int> grainVals;
+	grainVals.push_back(0);  grainVals.push_back(5);
+	grainVals.push_back(10); grainVals.push_back(20);
+	Common::Array<int> sharpenVals;
+	sharpenVals.push_back(0);  sharpenVals.push_back(25);
+	sharpenVals.push_back(50); sharpenVals.push_back(75);
+	Common::Array<int> dofStrengthVals;
+	dofStrengthVals.push_back(0); dofStrengthVals.push_back(3);
+	dofStrengthVals.push_back(5); dofStrengthVals.push_back(8);
+
+	// --- Left column: master toggle, auto per-scene, colour grade + tone
+	_widgets.push_back(new CustomCheckboxWidget(_gfx, "Post-processing", Common::Point(leftX, y), "enable_post_processing"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCheckboxWidget(_gfx, "Auto per-scene", Common::Point(leftX, y), "auto_scene_post"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Post intensity", Common::Point(leftX, y), "post_master", masterVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Brightness", Common::Point(leftX, y), "grade_brightness", brightnessVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Contrast", Common::Point(leftX, y), "grade_contrast", contrastVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Saturation", Common::Point(leftX, y), "grade_saturation", satVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Tonemap", Common::Point(leftX, y), "tonemap_strength", tonemapVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Bloom", Common::Point(leftX, y), "bloom_strength", bloomVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+
+	// --- Right column: effects, contact AO + depth of field
+	y = startY;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Contact AO", Common::Point(rightX, y), "ssao_master", ssaoVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Vignette", Common::Point(rightX, y), "vignette_strength", vignetteVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Film grain", Common::Point(rightX, y), "grain_strength", grainVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "Sharpen", Common::Point(rightX, y), "sharpen_strength", sharpenVals, "%"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCheckboxWidget(_gfx, "Depth of field", Common::Point(rightX, y), "enable_depth_of_field"));
+	_widgets.back()->setupSounds(3, 4);
+	y += step;
+	_widgets.push_back(new CustomCycleWidget(_gfx, "DoF strength", Common::Point(rightX, y), "dof_strength", dofStrengthVals, ""));
+	_widgets.back()->setupSounds(3, 4);
+}
+
 void SettingsMenuScreen::close() {
 	_soundManager.close();
 	ConfMan.flushToDisk();
@@ -315,10 +425,16 @@ void SettingsMenuScreen::onGameLoop() {
 	if (_pendingRebuild) {
 		_pendingRebuild = false;
 		freeWidgets();
-		if (_enhancementsPage) {
+		switch (_page) {
+		case kEnhancementsPage:
 			buildEnhancementsPage();
-		} else {
+			break;
+		case kPostFxPage:
+			buildPostFxPage();
+			break;
+		default:
 			buildSettingsPage();
+			break;
 		}
 	}
 
@@ -327,7 +443,7 @@ void SettingsMenuScreen::onGameLoop() {
 
 void SettingsMenuScreen::handleMouseUp() {
 	// The volume sliders only exist on the main settings page
-	if (!_enhancementsPage && _widgets.size() > kWidgetSfx) {
+	if (_page == kMainPage && _widgets.size() > kWidgetSfx) {
 		_soundManager.endLoop();
 		_widgets[kWidgetVoice]->onMouseUp();
 		_widgets[kWidgetMusic]->onMouseUp();
@@ -624,8 +740,8 @@ VolumeWidget::VolumeWidget(const char *renderEntryName, Cursor *cursor,
 		_cursor(cursor),
 		_soundManager(soundManager),
 		_soundIndex(soundIndex),
-		_settingIndex(settingIndex),
-		_isDragged(false) {
+		_isDragged(false),
+		_settingIndex(settingIndex) {
 	// Load images
 	_sliderImage = StarkStaticProvider->getUIElement(StaticProvider::kVolume, 0);
 	_bgImage = StarkStaticProvider->getUIElement(StaticProvider::kVolume, 1);

@@ -56,6 +56,7 @@ private:
 	bool _crawlActive;
 	bool _crawlScenes;
 	bool _crawlModels;
+	bool _crawlForce;
 	int _crawlWait;
 
 	bool Cmd_DumpArchive(int argc, const char **argv);
@@ -70,6 +71,8 @@ private:
 	bool Cmd_Toggle(int argc, const char **argv);
 	bool Cmd_SetInt(int argc, const char **argv);
 	bool Cmd_SetBool(int argc, const char **argv);
+	bool Cmd_PostInfo(int argc, const char **argv);
+	bool Cmd_RenderEntries(int argc, const char **argv);
 	bool Cmd_PostPreset(int argc, const char **argv);
 	bool Cmd_DumpModels(int argc, const char **argv);
 	bool Cmd_DumpModelsOriginal(int argc, const char **argv);

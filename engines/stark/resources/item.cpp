@@ -1156,15 +1156,17 @@ void ModelItem::updateAmbientTint(Visual *visual) {
 		Gfx::Color bgColor = location->getBackgroundColorAtPoint(screenPos, 12);
 
 		// Match the scene's color balance, but keep the character readable:
-		// blend the raw tint toward neutral, and floor the brightness so a
-		// dark background (a shadowed facade) can't make a character vanish.
+		// blend the raw tint toward neutral, and floor the brightness so a dark
+		// background can't make a character vanish. The floor is tunable: too high
+		// and the character looks spotlit in dark rooms; too low and it disappears.
 		float strength = CLIP(ConfMan.getInt("scene_lighting_strength"), 0, 100) / 100.0f;
+		float minLight = CLIP(ConfMan.getInt("character_min_light"), 0, 100) / 100.0f;
 		float tr = CLIP(bgColor.r / 128.0f, 0.0f, 1.35f);
 		float tg = CLIP(bgColor.g / 128.0f, 0.0f, 1.35f);
 		float tb = CLIP(bgColor.b / 128.0f, 0.0f, 1.35f);
-		target.x() = MAX(1.0f + (tr - 1.0f) * strength, 0.72f);
-		target.y() = MAX(1.0f + (tg - 1.0f) * strength, 0.72f);
-		target.z() = MAX(1.0f + (tb - 1.0f) * strength, 0.72f);
+		target.x() = MAX(1.0f + (tr - 1.0f) * strength, minLight);
+		target.y() = MAX(1.0f + (tg - 1.0f) * strength, minLight);
+		target.z() = MAX(1.0f + (tb - 1.0f) * strength, minLight);
 	}
 
 	// The smoothed value lives on the item, so animation changes swapping

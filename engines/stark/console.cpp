@@ -26,6 +26,7 @@
 #include "engines/stark/resources/anim.h"
 #include "engines/stark/resources/level.h"
 #include "engines/stark/resources/location.h"
+#include "engines/stark/resources/level.h"
 #include "engines/stark/resources/knowledge.h"
 #include "engines/stark/resources/root.h"
 #include "engines/stark/resources/script.h"
@@ -43,6 +44,7 @@
 #include "engines/stark/tools/decompiler.h"
 
 #include "engines/stark/gfx/renderentry.h"
+#include "engines/stark/gfx/driver.h"
 #include "engines/stark/model/model.h"
 #include "engines/stark/resources/bonesmesh.h"
 #include "engines/stark/resources/camera.h"
@@ -65,6 +67,7 @@ Console::Console() :
 		_crawlActive(false),
 		_crawlScenes(false),
 		_crawlModels(false),
+		_crawlForce(false),
 		_crawlWait(0) {
 	registerCmd("dumpArchive",          WRAP_METHOD(Console, Cmd_DumpArchive));
 	registerCmd("dumpRoot",             WRAP_METHOD(Console, Cmd_DumpRoot));
@@ -78,6 +81,8 @@ Console::Console() :
 	registerCmd("toggle",               WRAP_METHOD(Console, Cmd_Toggle));
 	registerCmd("setInt",               WRAP_METHOD(Console, Cmd_SetInt));
 	registerCmd("setBool",              WRAP_METHOD(Console, Cmd_SetBool));
+	registerCmd("postInfo",             WRAP_METHOD(Console, Cmd_PostInfo));
+	registerCmd("renderEntries",        WRAP_METHOD(Console, Cmd_RenderEntries));
 	registerCmd("postPreset",           WRAP_METHOD(Console, Cmd_PostPreset));
 	registerCmd("dumpModels",           WRAP_METHOD(Console, Cmd_DumpModels));
 	registerCmd("dumpModelsOriginal",   WRAP_METHOD(Console, Cmd_DumpModelsOriginal));
@@ -222,12 +227,16 @@ void Console::dumpCurrentSceneData() {
 		debugPrintf("%s -> %s (depth map target: %s)\n",
 				imageName.c_str(), outPath.toString().c_str(), modPath.toString().c_str());
 
-		// Locate the item's current on-screen position for overlay props
+		// Locate the item's current on-screen position for overlay props, plus
+		// its eye-space distance (|sort key|) - the anchor a prop depth map is
+		// calibrated around.
 		bool positioned = false;
 		Common::Point itemPosition;
+		float itemDistance = 0.0f;
 		for (uint j = 0; j < renderEntries.size(); j++) {
 			if (renderEntries[j]->getOwner() == parentItem) {
 				itemPosition = renderEntries[j]->getPosition();
+				itemDistance = ABS(renderEntries[j]->getSortKey());
 				positioned = true;
 				break;
 			}
@@ -235,14 +244,15 @@ void Console::dumpCurrentSceneData() {
 
 		manifest += Common::String::format(
 				"%s\t{\"dumped\": \"%s%s.png\", \"background\": %s, \"depthTarget\": \"%s\", "
-				"\"positioned\": %s, \"position\": [%d, %d], \"size\": [%d, %d]}",
+				"\"positioned\": %s, \"position\": [%d, %d], \"size\": [%d, %d], \"eyeDistance\": %f}",
 				dumpedImages > 1 ? ",\n" : "",
 				isBackground ? "background_" : "", imageName.c_str(),
 				isBackground ? "true" : "false",
 				modPath.toString('/').c_str(),
 				positioned ? "true" : "false",
 				itemPosition.x, itemPosition.y,
-				imageVisual->getWidth(), imageVisual->getHeight());
+				imageVisual->getWidth(), imageVisual->getHeight(),
+				itemDistance);
 	}
 
 	manifest += "\n]\n";
@@ -265,9 +275,17 @@ void Console::dumpCurrentSceneData() {
 	Math::Matrix4 view = StarkScene->getViewMatrix();
 	Math::Matrix4 projection = StarkScene->getProjectionMatrix();
 
+	// Scroll offset and full scene size, so a scrolling location's floor anchors
+	// can be mapped onto the full background image (not just the current window).
+	Common::Rect sceneViewport = StarkScene->getSceneViewport();
+	Common::Rect sceneSize = StarkScene->getSceneSize();
+
 	Common::String json = "{\n";
 	json += Common::String::format("\t\"level\": \"%02x\",\n\t\"location\": \"%02x\",\n",
 			level->getIndex(), location->getIndex());
+	json += Common::String::format("\t\"scroll\": [%d, %d],\n", sceneViewport.left, sceneViewport.top);
+	json += Common::String::format("\t\"sceneWidth\": %d,\n\t\"sceneHeight\": %d,\n",
+			sceneSize.width(), sceneSize.height());
 
 	json += "\t\"viewMatrix\": [";
 	for (int i = 0; i < 16; i++) {
@@ -548,15 +566,22 @@ static void crawlTouchFile(const Common::String &path, const Common::String &con
 }
 
 bool Console::Cmd_DumpAll(int argc, const char **argv) {
-	if (argc != 2 || (strcmp(argv[1], "scenes") && strcmp(argv[1], "models") && strcmp(argv[1], "both"))) {
+	bool force = argc == 3 && strcmp(argv[2], "force") == 0;
+	if (argc < 2 || argc > 3 ||
+			(strcmp(argv[1], "scenes") && strcmp(argv[1], "models") && strcmp(argv[1], "both")) ||
+			(argc == 3 && !force)) {
 		debugPrintf("Visit every location in the game and dump its data for the\n");
 		debugPrintf("enhancement pipeline. Takes a few minutes; progress is printed\n");
 		debugPrintf("to the terminal. Save your game first: this trashes game state.\n");
+		debugPrintf("Add 'force' to re-dump locations already done in a previous run\n");
+		debugPrintf("(e.g. after the dump format changed); blacklisted crashers are\n");
+		debugPrintf("still skipped - clear dump/crawl to retry those too.\n");
 		debugPrintf("Usage :\n");
-		debugPrintf("dumpAll [scenes|models|both]\n");
+		debugPrintf("dumpAll [scenes|models|both] [force]\n");
 		return true;
 	}
 
+	_crawlForce = force;
 	_crawlScenes = strcmp(argv[1], "models") != 0;
 	_crawlModels = strcmp(argv[1], "scenes") != 0;
 
@@ -601,8 +626,8 @@ bool Console::Cmd_DumpAll(int argc, const char **argv) {
 			target.level = level->getIndex();
 			target.location = locations[j]->getIndex();
 
-			if (crawlFileExists(crawlDoneMarker(target.level, target.location))) {
-				continue; // Already dumped in a previous run
+			if (!_crawlForce && crawlFileExists(crawlDoneMarker(target.level, target.location))) {
+				continue; // Already dumped in a previous run (ignored with 'force')
 			}
 			if (crawlFileExists(crawlSkipMarker(target.level, target.location))) {
 				continue; // Blacklisted as a crasher
@@ -730,6 +755,90 @@ bool Console::Cmd_SetBool(int argc, const char **argv) {
 	ConfMan.setBool(argv[1], value);
 	ConfMan.flushToDisk();
 	debugPrintf("%s: %s\n", argv[1], value ? "true" : "false");
+	return true;
+}
+
+bool Console::Cmd_PostInfo(int argc, const char **argv) {
+	debugPrintf("enable_post_processing: %s\n", ConfMan.getBool("enable_post_processing") ? "ON" : "off");
+	debugPrintf("auto_scene_post:        %s\n", ConfMan.getBool("auto_scene_post") ? "ON" : "off");
+
+	// Depth setup used by the last post pass. Contact-mode SSAO (no character
+	// self-shadow, no bleed onto foreground sprites) needs BOTH the GL depth
+	// copy and the background depth mask; if either is missing it silently
+	// falls back to plain crease AO, which does bleed.
+	bool glDepth = false, worldMask = false, contact = false;
+	StarkGfx->getPostDepthState(glDepth, worldMask, contact);
+	debugPrintf("enable_depth_copy:      %s\n", ConfMan.getBool("enable_depth_copy") ? "ON" : "off");
+	debugPrintf("enable_depth_maps:      %s\n", ConfMan.getBool("enable_depth_maps") ? "ON" : "off");
+	debugPrintf("  -> GL depth copied:      %s\n", glDepth ? "yes" : "no");
+	debugPrintf("  -> world depth mask set: %s\n", worldMask ? "yes" : "no");
+	debugPrintf("  -> contact-mode SSAO:    %s\n", contact ? "ACTIVE" : "no (fallback crease AO)");
+	if (!ConfMan.getBool("enable_depth_maps")) {
+		debugPrintf("  !! enable_depth_maps is OFF: SSAO falls back to bleeding crease AO.\n");
+		debugPrintf("     Fix: setBool enable_depth_maps true  (or the Depth occlusion toggle)\n");
+	}
+	debugPrintf("post_debug_view:        %d  (setInt post_debug_view 1..4 to visualize)\n",
+			ConfMan.getInt("post_debug_view"));
+
+	// Sprite depth stamp (Route B): how many foreground sprites got stamped last
+	// frame, and at what eye-space depth range, vs the scene's clip planes. If the
+	// stamp range sits near farClip instead of between near and the mask, the sort
+	// key isn't the eye-space depth we assume (scale mismatch).
+	int stampCount = 0; float stampMin = 0.0f, stampMax = 0.0f;
+	StarkGfx->getSpriteStampInfo(stampCount, stampMin, stampMax);
+	debugPrintf("enable_sprite_depth:    %s\n", ConfMan.getBool("enable_sprite_depth") ? "ON" : "off");
+	debugPrintf("  -> sprites stamped:      %d (eye depth %.1f .. %.1f)\n", stampCount, stampMin, stampMax);
+	debugPrintf("  -> scene near/far clip:  %.1f / %.1f\n",
+			StarkScene->getNearClipPlane(), StarkScene->getFarClipPlane());
+
+	Current *current = StarkGlobal->getCurrent();
+	if (current && current->getLevel() && current->getLocation()) {
+		debugPrintf("current location key:   %02x/%02x\n",
+				current->getLevel()->getIndex(), current->getLocation()->getIndex());
+	} else {
+		debugPrintf("current location key:   (none - not in a location)\n");
+	}
+
+	static const char *const keys[] = {
+		"ssao_strength", "tonemap_strength", "bloom_strength", "bloom_threshold",
+		"vignette_strength", "grade_saturation", "grade_contrast", "grade_brightness"
+	};
+	debugPrintf("effective post values (per-scene marked *):\n");
+	for (uint i = 0; i < ARRAYSIZE(keys); i++) {
+		int effective = StarkScene->getPostSetting(keys[i]);
+		int global = ConfMan.getInt(keys[i]);
+		debugPrintf("  %-18s = %-5d %s\n", keys[i], effective,
+				effective != global ? "* (from post_scenes.json)" : "");
+	}
+
+	int ssaoBase = StarkScene->getPostSetting("ssao_strength");
+	int ssaoMaster = ConfMan.getInt("ssao_master");
+	debugPrintf("SSAO: base %d x master %d%% = %d effective\n",
+			ssaoBase, ssaoMaster, CLIP(ssaoBase * CLIP(ssaoMaster, 0, 300) / 100, 0, 100));
+	return true;
+}
+
+bool Console::Cmd_RenderEntries(int argc, const char **argv) {
+	Current *current = StarkGlobal->getCurrent();
+	if (!current || !current->getLocation()) {
+		debugPrintf("Not in a location\n");
+		return true;
+	}
+
+	Gfx::RenderEntryArray entries = current->getLocation()->listRenderEntries();
+	debugPrintf("%-26s %-5s %-8s %-9s %-9s\n", "name", "image", "depthmap", "sortKey", "stampEye");
+	for (uint i = 0; i < entries.size(); i++) {
+		Gfx::RenderEntry *e = entries[i];
+		VisualImageXMG *img = e->getImage();
+		debugPrintf("%-26s %-5s %-8s %-9.1f %-9.1f\n",
+				e->getName().c_str(),
+				img ? "yes" : "no",
+				img ? (img->hasDepthMap() ? "yes" : "no") : "-",
+				e->getSortKey(),
+				e->getStampEyeDepth());
+	}
+	debugPrintf("(%u entries; stamp needs image=yes, depthmap=no, and sortKey or stampEye > 0)\n",
+			entries.size());
 	return true;
 }
 
