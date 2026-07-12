@@ -47,37 +47,31 @@ namespace Gfx {
 // matches the previous uniform look, so unrecognised materials are unchanged.
 static void classifyMaterial(const Common::String &name, const Common::String &texture,
                              float &specStrength, float &shininess, float &rim) {
-	// Softened relative to a physically tight highlight: on the low-poly 1999
-	// meshes the surface normals sweep quickly during animation, so a narrow
-	// specular lobe darts across the surface and reads as a twinkling/pulsing
-	// glint. Lower shininess widens the lobe (it moves as a gentle sheen instead
-	// of a sharp point) and lower strength keeps it from popping. The tight
-	// materials (eyes, metal) were the worst offenders and are cut the most.
-	specStrength = 0.12f;
-	shininess = 14.0f;
-	rim = 0.22f;
+	specStrength = 0.18f;
+	shininess = 18.0f;
+	rim = 0.25f;
 
 	Common::String n = name + " " + texture;
 	n.toLowercase();
 
 	if (n.contains("eye")) {
-		specStrength = 0.32f; shininess = 34.0f;
+		specStrength = 0.55f; shininess = 60.0f;
 	} else if (n.contains("metal") || n.contains("armor") || n.contains("armour")
 			|| n.contains("steel") || n.contains("gold") || n.contains("blade")
 			|| n.contains("sword") || n.contains("helm") || n.contains("buckle")
 			|| n.contains("chrome") || n.contains("glass")) {
-		specStrength = 0.28f; shininess = 28.0f;
+		specStrength = 0.50f; shininess = 46.0f;
 	} else if (n.contains("hair")) {
-		specStrength = 0.09f; shininess = 16.0f;
+		specStrength = 0.12f; shininess = 22.0f;
 	} else if (n.contains("cloth") || n.contains("dress") || n.contains("shirt")
 			|| n.contains("pant") || n.contains("robe") || n.contains("cape")
 			|| n.contains("coat") || n.contains("jacket") || n.contains("skirt")
 			|| n.contains("trouser") || n.contains("kjole") || n.contains("cloak")) {
-		specStrength = 0.04f; shininess = 9.0f;
+		specStrength = 0.05f; shininess = 10.0f;
 	} else if (n.contains("face") || n.contains("skin") || n.contains("head")
 			|| n.contains("hand") || n.contains("arm") || n.contains("leg")
 			|| n.contains("body") || n.contains("neck") || n.contains("foot")) {
-		specStrength = 0.09f; shininess = 13.0f; rim = 0.28f;
+		specStrength = 0.12f; shininess = 16.0f; rim = 0.30f;
 	}
 }
 
@@ -221,7 +215,7 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 		if (materialsEnabled) {
 			classifyMaterial(material->name, material->texture, specStrength, shininess, rim);
 		} else {
-			specStrength = 0.12f; shininess = 14.0f; rim = 0.22f;
+			specStrength = 0.18f; shininess = 18.0f; rim = 0.25f;
 		}
 		// Live global dial for overall specular intensity (percent, 100 = the
 		// tuned defaults). Lets the highlight be softened further or removed
