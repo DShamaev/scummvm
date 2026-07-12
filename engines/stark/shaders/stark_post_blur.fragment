@@ -1,0 +1,30 @@
+in vec2 Texcoord;
+
+OUTPUT
+
+uniform sampler2D tex;
+uniform vec2 direction;    // per-tap step: (1/w,0) horizontal, (0,1/h) vertical
+uniform float mode;        // 0 = separable Gaussian blur, 1 = bright-pass prefilter
+uniform float threshold;   // bright-pass luminance cutoff (0..1)
+
+void main() {
+	if (mode > 0.5) {
+		// Bright-pass prefilter with a soft knee: keep only what blooms.
+		vec3 c = texture(tex, Texcoord).rgb;
+		float l = dot(c, vec3(0.299, 0.587, 0.114));
+		float k = max(l - threshold, 0.0) / max(l, 1e-4);
+		outColor = vec4(c * k, 1.0);
+	} else {
+		// 9-tap separable Gaussian (weights sum to 1).
+		vec3 sum = texture(tex, Texcoord).rgb * 0.227027;
+		sum += (texture(tex, Texcoord + direction * 1.0).rgb
+		      + texture(tex, Texcoord - direction * 1.0).rgb) * 0.1945946;
+		sum += (texture(tex, Texcoord + direction * 2.0).rgb
+		      + texture(tex, Texcoord - direction * 2.0).rgb) * 0.1216216;
+		sum += (texture(tex, Texcoord + direction * 3.0).rgb
+		      + texture(tex, Texcoord - direction * 3.0).rgb) * 0.054054;
+		sum += (texture(tex, Texcoord + direction * 4.0).rgb
+		      + texture(tex, Texcoord - direction * 4.0).rgb) * 0.016216;
+		outColor = vec4(sum, 1.0);
+	}
+}

@@ -95,6 +95,9 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("bloom_threshold", 70);// percent luminance cutoff
 	ConfMan.registerDefault("auto_scene_post", true); // derive per-scene defaults
 	ConfMan.registerDefault("post_master", 100);   // master grade intensity, % (100 = full)
+	// Multi-pass FBO post: wide, smooth bloom (bright-pass + separable Gaussian)
+	// instead of the single-pass inline bloom. Now that FBOs work on this stack.
+	ConfMan.registerDefault("enable_hq_post", true);
 	// SSAO/DoF use the real GL depth buffer (includes the character) rather than
 	// the background depth mask. Confirmed working on Apple GL-over-Metal (the
 	// earlier "hang" was the pause-key bug); mask is the fallback if a stack

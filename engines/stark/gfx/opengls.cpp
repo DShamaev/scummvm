@@ -106,7 +106,13 @@ OpenGLSDriver::OpenGLSDriver() :
 	_spriteStampMinEye(0.0f),
 	_spriteStampMaxEye(0.0f),
 	_spriteStampMinEyeFrame(0.0f),
-	_spriteStampMaxEyeFrame(0.0f) {
+	_spriteStampMaxEyeFrame(0.0f),
+	_blurShader(nullptr),
+	_bloomFbo(0),
+	_bloomTexA(0),
+	_bloomTexB(0),
+	_bloomW(0),
+	_bloomH(0) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
@@ -116,6 +122,10 @@ OpenGLSDriver::~OpenGLSDriver() {
 	freePostResources();
 	if (_magTex) { glDeleteTextures(1, &_magTex); _magTex = 0; }
 	if (_postDepthCopyTex) { glDeleteTextures(1, &_postDepthCopyTex); _postDepthCopyTex = 0; }
+	if (_bloomTexA) { glDeleteTextures(1, &_bloomTexA); _bloomTexA = 0; }
+	if (_bloomTexB) { glDeleteTextures(1, &_bloomTexB); _bloomTexB = 0; }
+	if (_bloomFbo) { glDeleteFramebuffers(1, &_bloomFbo); _bloomFbo = 0; }
+	delete _blurShader;
 	delete _postShader;
 	delete _surfaceFillShader;
 	delete _surfaceDepthShader;
@@ -158,6 +168,11 @@ void OpenGLSDriver::init() {
 	_postVBO = OpenGL::Shader::createBuffer(GL_ARRAY_BUFFER, sizeof(postVertices), postVertices);
 	_postShader->enableVertexAttribute("position", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
 	_postShader->enableVertexAttribute("texcoord", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
+
+	// Separable-blur / bright-pass shader for the high-quality bloom pyramid.
+	_blurShader = OpenGL::Shader::fromFiles("stark_post_blur", postAttributes);
+	_blurShader->enableVertexAttribute("position", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+	_blurShader->enableVertexAttribute("texcoord", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
 
 	// Diagnostic: report the OpenGL context SDL/macOS actually handed us, so we
 	// can tell whether we are on the legacy 2.1 stack (GLSL 1.20) or a modern
@@ -232,6 +247,67 @@ void OpenGLSDriver::getSpriteStampInfo(int &count, float &minEye, float &maxEye)
 	count = _spriteStampCount;
 	minEye = _spriteStampMinEye;
 	maxEye = _spriteStampMaxEye;
+}
+
+void OpenGLSDriver::blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dirY,
+                            float mode, float threshold) {
+	glBindFramebuffer(GL_FRAMEBUFFER, _bloomFbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
+	glViewport(0, 0, _bloomW, _bloomH);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
+
+	_blurShader->use();
+	_blurShader->setUniform("tex", 0);
+	_blurShader->setUniform("direction", Math::Vector2d(dirX, dirY));
+	_blurShader->setUniform1f("mode", mode);
+	_blurShader->setUniform1f("threshold", threshold);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, srcTex);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	_blurShader->unbind();
+}
+
+void OpenGLSDriver::buildBloom(int vw, int vh, float threshold) {
+	int bw = MAX(vw / 2, 1);
+	int bh = MAX(vh / 2, 1);
+
+	if (!_bloomFbo) {
+		glGenFramebuffers(1, &_bloomFbo);
+	}
+	if (!_bloomTexA || _bloomW != bw || _bloomH != bh) {
+		if (_bloomTexA) glDeleteTextures(1, &_bloomTexA);
+		if (_bloomTexB) glDeleteTextures(1, &_bloomTexB);
+		GLuint tex[2] = { 0, 0 };
+		glGenTextures(2, tex);
+		_bloomTexA = tex[0];
+		_bloomTexB = tex[1];
+		for (int i = 0; i < 2; i++) {
+			glBindTexture(GL_TEXTURE_2D, tex[i]);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bw, bh, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		glBindTexture(GL_TEXTURE_2D, 0);
+		_bloomW = bw;
+		_bloomH = bh;
+	}
+
+	// Bright-pass the scene into A, then two separable Gaussian iterations
+	// (H into B, V into A) for a wide, smooth bloom. Half resolution.
+	blurPass(_magTex, _bloomTexA, 0.0f, 0.0f, 1.0f, threshold);
+	float dx = 1.0f / (float)bw;
+	float dy = 1.0f / (float)bh;
+	for (int i = 0; i < 2; i++) {
+		blurPass(_bloomTexA, _bloomTexB, dx, 0.0f, 0.0f, 0.0f);
+		blurPass(_bloomTexB, _bloomTexA, 0.0f, dy, 0.0f, 0.0f);
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax) {
@@ -503,6 +579,19 @@ void OpenGLSDriver::applyPostProcess() {
 		glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, vp.left, glY, vw, vh, 0);
 	}
 
+	// High-quality bloom: build a wide, smooth bloom in a half-res FBO from the
+	// copied scene, added in the final pass instead of the single-pass inline one.
+	bool hqBloom = grading && ConfMan.getBool("enable_hq_post")
+			&& StarkScene->getPostSetting("bloom_strength") > 0;
+	if (hqBloom) {
+		buildBloom(vw, vh, CLIP(StarkScene->getPostSetting("bloom_threshold"), 0, 100) / 100.0f);
+		// buildBloom rebinds the default framebuffer but leaves a small viewport;
+		// restore the game-viewport region for the final composite.
+		setViewport(Common::Rect(0, Gfx::Driver::kTopBorderHeight,
+		                         Gfx::Driver::kOriginalWidth,
+		                         Gfx::Driver::kTopBorderHeight + Gfx::Driver::kGameViewportHeight));
+	}
+
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 	glDisable(GL_BLEND);
@@ -539,6 +628,17 @@ void OpenGLSDriver::applyPostProcess() {
 		_postShader->setUniform1f("tonemapStrength", CLIP(StarkScene->getPostSetting("tonemap_strength"), 0, 100) / 100.0f * pm);
 		_postShader->setUniform1f("bloomStrength", CLIP(StarkScene->getPostSetting("bloom_strength"), 0, 300) / 100.0f * pm);
 		_postShader->setUniform1f("bloomThreshold", CLIP(StarkScene->getPostSetting("bloom_threshold"), 0, 100) / 100.0f);
+
+		// High-quality bloom texture (pre-blurred in the FBO) on unit 3.
+		if (hqBloom) {
+			glActiveTexture(GL_TEXTURE3);
+			glBindTexture(GL_TEXTURE_2D, _bloomTexA);
+			glActiveTexture(GL_TEXTURE0);
+			_postShader->setUniform("bloomTex", 3);
+			_postShader->setUniform1f("hqBloom", 1.0f);
+		} else {
+			_postShader->setUniform1f("hqBloom", 0.0f);
+		}
 	} else {
 		_postShader->setUniform1f("gradeBrightness", 0.0f);
 		_postShader->setUniform1f("gradeContrast", 1.0f);
@@ -550,6 +650,7 @@ void OpenGLSDriver::applyPostProcess() {
 		_postShader->setUniform1f("tonemapStrength", 0.0f);
 		_postShader->setUniform1f("bloomStrength", 0.0f);
 		_postShader->setUniform1f("bloomThreshold", 1.0f);
+		_postShader->setUniform1f("hqBloom", 0.0f);
 	}
 
 	// Contact ambient occlusion (depth-based), independent of colour grading.

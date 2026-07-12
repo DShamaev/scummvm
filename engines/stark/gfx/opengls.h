@@ -157,6 +157,22 @@ private:
 	float _spriteStampMinEyeFrame;
 	float _spriteStampMaxEyeFrame;
 
+	// High-quality bloom: bright-pass + separable Gaussian at half resolution in
+	// an FBO (now that FBOs work on this stack), for a wide, smooth bloom instead
+	// of the single-pass inline version.
+	OpenGL::Shader *_blurShader;
+	GLuint _bloomFbo;
+	GLuint _bloomTexA;
+	GLuint _bloomTexB;
+	int _bloomW;
+	int _bloomH;
+
+	// Render one fullscreen pass with _blurShader from srcTex into dstTex (bound
+	// to _bloomFbo), at the current _bloomW x _bloomH. mode 1 = bright-pass.
+	void blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dirY, float mode, float threshold);
+	// Build the bloom texture (_bloomTexA) from the copied scene (_magTex).
+	void buildBloom(int vw, int vh, float threshold);
+
 	void ensurePostResources(int width, int height);
 	void freePostResources();
 };
