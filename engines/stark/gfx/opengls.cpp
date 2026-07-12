@@ -115,9 +115,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_bloomH(0),
 	_ssaoShader(nullptr),
 	_aoTexA(0),
-	_aoTexB(0),
-	_dofTexA(0),
-	_dofTexB(0) {
+	_aoTexB(0) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
@@ -131,8 +129,6 @@ OpenGLSDriver::~OpenGLSDriver() {
 	if (_bloomTexB) { glDeleteTextures(1, &_bloomTexB); _bloomTexB = 0; }
 	if (_aoTexA) { glDeleteTextures(1, &_aoTexA); _aoTexA = 0; }
 	if (_aoTexB) { glDeleteTextures(1, &_aoTexB); _aoTexB = 0; }
-	if (_dofTexA) { glDeleteTextures(1, &_dofTexA); _dofTexA = 0; }
-	if (_dofTexB) { glDeleteTextures(1, &_dofTexB); _dofTexB = 0; }
 	if (_bloomFbo) { glDeleteFramebuffers(1, &_bloomFbo); _bloomFbo = 0; }
 	delete _blurShader;
 	delete _ssaoShader;
@@ -294,8 +290,8 @@ void OpenGLSDriver::ensureHalfResTargets(int vw, int vh) {
 	if (_bloomTexA && _bloomW == bw && _bloomH == bh) {
 		return;
 	}
-	GLuint *targets[6] = { &_bloomTexA, &_bloomTexB, &_aoTexA, &_aoTexB, &_dofTexA, &_dofTexB };
-	for (int i = 0; i < 6; i++) {
+	GLuint *targets[4] = { &_bloomTexA, &_bloomTexB, &_aoTexA, &_aoTexB };
+	for (int i = 0; i < 4; i++) {
 		if (*targets[i]) glDeleteTextures(1, targets[i]);
 		glGenTextures(1, targets[i]);
 		glBindTexture(GL_TEXTURE_2D, *targets[i]);
@@ -371,25 +367,6 @@ void OpenGLSDriver::buildSSAO(int vw, int vh, float radius, float dynamicOnly) {
 	float dy = 1.0f / (float)_bloomH;
 	blurPass(_aoTexA, _aoTexB, dx, 0.0f, 0.0f, 0.0f);
 	blurPass(_aoTexB, _aoTexA, 0.0f, dy, 0.0f, 0.0f);
-
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-}
-
-void OpenGLSDriver::buildDoF(int vw, int vh, int iterations) {
-	ensureHalfResTargets(vw, vh);
-
-	// Pre-blur the scene into _dofTexA: bright-pass mode 0 (plain copy+blur) from
-	// the copied frame, then N separable Gaussian iterations. The composite then
-	// cross-fades the sharp frame toward this by circle-of-confusion, so out-of-
-	// focus regions get a genuinely smooth blur instead of an 8-tap ring of the
-	// sharp image. Half resolution keeps it cheap and adds to the softness.
-	blurPass(_magTex, _dofTexA, 0.0f, 0.0f, 0.0f, 0.0f);
-	float dx = 1.0f / (float)_bloomW;
-	float dy = 1.0f / (float)_bloomH;
-	for (int i = 0; i < iterations; i++) {
-		blurPass(_dofTexA, _dofTexB, dx, 0.0f, 0.0f, 0.0f);
-		blurPass(_dofTexB, _dofTexA, 0.0f, dy, 0.0f, 0.0f);
-	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
@@ -606,7 +583,7 @@ void OpenGLSDriver::applyPostProcess() {
 	// The depth debug views need the depth source bound even when SSAO/DoF are
 	// off, so they always reflect the true depth setup rather than stale/unbound
 	// samplers (which read as "everything is background").
-	int debugView   = CLIP(ConfMan.getInt("post_debug_view"), 0, 5);
+	int debugView   = CLIP(ConfMan.getInt("post_debug_view"), 0, 4);
 	bool wantDepth  = dof || ssao || debugView > 0;
 
 	// Nothing to apply: leave the already-rendered frame as-is.
@@ -680,17 +657,7 @@ void OpenGLSDriver::applyPostProcess() {
 		          dynamicMask ? 1.0f : 0.0f);
 	}
 
-	// High-quality depth-of-field: pre-blur the scene into a half-res buffer the
-	// composite cross-fades toward, for smooth bokeh instead of a harsh ring.
-	bool hqDof = grading && hqPost && dof;
-	// Build/bind the pre-blurred buffer for the effect, or for debug view 5
-	// (inspect the DoF buffer) even when colour grading is off.
-	bool dofBuf = hqPost && dof && (grading || debugView == 5);
-	if (dofBuf) {
-		buildDoF(vw, vh, 4);
-	}
-
-	if (hqBloom || hqSSAO || dofBuf) {
+	if (hqBloom || hqSSAO) {
 		// The FBO passes rebind the default framebuffer but leave a small
 		// viewport; restore the game-viewport region for the final composite.
 		setViewport(Common::Rect(0, Gfx::Driver::kTopBorderHeight,
@@ -787,22 +754,9 @@ void OpenGLSDriver::applyPostProcess() {
 		_postShader->setUniform1f("dofStrength", (float)CLIP(ConfMan.getInt("dof_strength"), 0, 64));
 		_postShader->setUniform1f("dofFocus", focus);
 		_postShader->setUniform1f("dofRange", MAX(focus * rangePct, 0.001f));
-		// High-quality path: cross-fade toward the pre-blurred buffer on unit 5.
-		// Bind the buffer whenever it was built (effect or debug view 5).
-		if (dofBuf) {
-			glActiveTexture(GL_TEXTURE5);
-			glBindTexture(GL_TEXTURE_2D, _dofTexA);
-			glActiveTexture(GL_TEXTURE0);
-			_postShader->setUniform("dofTex", 5);
-		}
-		_postShader->setUniform1f("hqDof", hqDof ? 1.0f : 0.0f);
 	} else {
 		_postShader->setUniform1f("dofStrength", 0.0f);
-		_postShader->setUniform1f("hqDof", 0.0f);
 	}
-	// Diagnostic: did we actually build+bind the pre-blurred DoF buffer this
-	// frame? (Debug view 5 tints the scene blue when we didn't, i.e. no depth.)
-	_postShader->setUniform1f("dofBufBound", dofBuf ? 1.0f : 0.0f);
 
 	// Bind the depth source(s) for SSAO / DoF. Primary depth on unit 1:
 	//   mode 1 = GL window depth (real, includes the character)

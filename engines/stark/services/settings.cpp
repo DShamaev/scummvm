@@ -83,7 +83,7 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 
 	// Depth of field: focus on the character, soften by distance
 	ConfMan.registerDefault("enable_depth_of_field", false);
-	ConfMan.registerDefault("dof_strength", 20);   // HQ: blur cross-fade aggressiveness
+	ConfMan.registerDefault("dof_strength", 3);    // max blur radius in texels (inline)
 	ConfMan.registerDefault("dof_range", 200);     // falloff width, % of focus distance
 
 	// Contact ambient occlusion (depth-only), filmic tonemap and bloom
