@@ -697,8 +697,22 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 	// The ambient light (index 0) is skipped intentionally.
 	for (uint i = 1; i < lights.size(); ++i) {
 		LightEntry *light = lights[i];
-		bool contributes = false;
 
+		// Only consider lights that could plausibly cast a ground shadow, i.e.
+		// that come from ABOVE the actor. Scenes (Academy) include sideways/upward
+		// "fill" directional lights that otherwise win the shadow and point it the
+		// wrong way (back toward the window). World is z-up.
+		bool overhead;
+		if (light->type == LightEntry::kDirectional) {
+			overhead = light->direction.z() < -0.05f;                       // travels downward
+		} else {
+			overhead = (light->position.z() - actorPosition.z()) > 0.0f;    // positioned above
+		}
+		if (!overhead) {
+			continue;
+		}
+
+		bool contributes = false;
 		Math::Vector3d lightDirection;
 		switch (light->type) {
 			case LightEntry::kPoint:
@@ -719,14 +733,6 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 			continue;
 		}
 		float mag = lightDirection.getMagnitude();
-		// Bias toward directional lights: window/sun daylight is usually the
-		// intended key/shadow-casting light, but a nearby point lamp can have a
-		// larger raw contribution and wrongly win (Academy: shadow pointed back
-		// toward the window). shadow_key_dir_boost (percent) sets the preference.
-		if (light->type == LightEntry::kDirectional) {
-			mag *= CLIP(ConfMan.hasKey("shadow_key_dir_boost")
-					? (int)ConfMan.getInt("shadow_key_dir_boost") : 300, 100, 2000) / 100.0f;
-		}
 		if (mag > bestMag) {
 			bestMag = mag;
 			bestDir = lightDirection;
