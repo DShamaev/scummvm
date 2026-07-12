@@ -66,6 +66,7 @@ public:
 	OpenGL::Shader *createFadeShaderInstance();
 	OpenGL::Shader *createShadowShaderInstance();
 	OpenGL::Shader *createShadowMapShaderInstance();
+	OpenGL::Shader *createShadowRecvShaderInstance();
 
 	/**
 	 * Shadow mapping. renderShadowMapBegin binds an offscreen buffer and returns
@@ -140,6 +141,7 @@ private:
 	OpenGL::Shader *_fadeShader;
 	OpenGL::Shader *_shadowShader;
 	OpenGL::Shader *_shadowMapShader;
+	OpenGL::Shader *_shadowRecvShader;
 
 	// Shadow mapping: the caster (April) is rendered from the light into this
 	// offscreen buffer as depth-encoded-in-colour, then receivers sample it.

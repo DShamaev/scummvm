@@ -1,0 +1,11 @@
+in vec3 position;   // world-space ground vertex (on the floor plane)
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+
+out vec3 vWorld;
+
+void main() {
+	vWorld = position;
+	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}

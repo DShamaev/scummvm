@@ -52,9 +52,10 @@ protected:
 	typedef Common::HashMap<Face *, GLuint> FaceBufferMap;
 
 	OpenGLSDriver *_gfx;
-	OpenGL::Shader *_shader, *_shadowShader, *_shadowMapShader;
+	OpenGL::Shader *_shader, *_shadowShader, *_shadowMapShader, *_shadowRecvShader;
 
 	GLuint _faceVBO;
+	GLuint _shadowRecvVBO;   // dynamic world-space ground quad for the shadow receive
 	FaceBufferMap _faceEBO;
 
 	// Shadow mapping: render this actor from the light into the driver's shadow
@@ -62,6 +63,9 @@ protected:
 	// it. Builds an orthographic light view-projection framing the actor.
 	void renderShadowMap(const Math::Matrix4 &model, const Math::Vector3d &position,
 			const LightEntryArray &lights);
+	// Receive the shadow map on a ground quad under the actor (replaces the
+	// jittered projection when shadow mapping is on).
+	void renderShadowReceive(const Math::Vector3d &position);
 
 	void clearVertices();
 	void uploadVertices();

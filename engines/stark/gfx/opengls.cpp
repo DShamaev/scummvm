@@ -124,6 +124,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_dofH(0),
 	_postDrawFbo(0),
 	_shadowMapShader(nullptr),
+	_shadowRecvShader(nullptr),
 	_shadowFbo(0),
 	_shadowTex(0),
 	_shadowDepthRBO(0),
@@ -149,6 +150,7 @@ OpenGLSDriver::~OpenGLSDriver() {
 	if (_shadowDepthRBO) { glDeleteRenderbuffers(1, &_shadowDepthRBO); _shadowDepthRBO = 0; }
 	if (_shadowFbo) { glDeleteFramebuffers(1, &_shadowFbo); _shadowFbo = 0; }
 	delete _shadowMapShader;
+	delete _shadowRecvShader;
 	delete _blurShader;
 	delete _ssaoShader;
 	delete _postShader;
@@ -183,6 +185,9 @@ void OpenGLSDriver::init() {
 	static const char* shadowAttributes[] = { "position1", "position2", "bone1", "bone2", "boneWeight", nullptr };
 	_shadowShader = OpenGL::Shader::fromFiles("stark_shadow", shadowAttributes);
 	_shadowMapShader = OpenGL::Shader::fromFiles("stark_shadowmap", shadowAttributes);
+
+	static const char* shadowRecvAttributes[] = { "position", nullptr };
+	_shadowRecvShader = OpenGL::Shader::fromFiles("stark_shadowrecv", shadowRecvAttributes);
 
 	static const char* fadeAttributes[] = { "position", nullptr };
 	_fadeShader = OpenGL::Shader::fromFiles("stark_fade", fadeAttributes);
@@ -1067,6 +1072,10 @@ OpenGL::Shader *OpenGLSDriver::createShadowShaderInstance() {
 
 OpenGL::Shader *OpenGLSDriver::createShadowMapShaderInstance() {
 	return _shadowMapShader->clone();
+}
+
+OpenGL::Shader *OpenGLSDriver::createShadowRecvShaderInstance() {
+	return _shadowRecvShader->clone();
 }
 
 int OpenGLSDriver::renderShadowMapBegin() {

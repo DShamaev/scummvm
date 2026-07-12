@@ -1,0 +1,42 @@
+OUTPUT
+
+in vec3 vWorld;
+
+uniform mat4 lightVP;        // world -> light clip space
+uniform sampler2D shadowTex; // depth-in-colour shadow map
+uniform float shadowAlpha;   // darkness of the fully-occluded shadow
+uniform float shadowBias;    // depth bias to avoid self-shadow acne
+uniform vec2 shadowTexel;    // 1.0 / shadow-map size (for PCF)
+
+float occluderDepth(vec2 uv) {
+	vec4 c = texture(shadowTex, uv);
+	return (c.r * 255.0 * 256.0 + c.g * 255.0) / 65535.0;
+}
+
+void main() {
+	vec4 lc = lightVP * vec4(vWorld, 1.0);
+	vec3 ndc = lc.xyz / lc.w;
+	vec2 uv = ndc.xy * 0.5 + 0.5;
+
+	// Outside the shadow map (light frustum) => not shadowed.
+	if (uv.x < 0.01 || uv.x > 0.99 || uv.y < 0.01 || uv.y > 0.99) {
+		discard;
+	}
+
+	float fragDepth = ndc.z * 0.5 + 0.5;
+
+	// 3x3 PCF for a soft edge.
+	float sh = 0.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			float od = occluderDepth(uv + vec2(float(x), float(y)) * shadowTexel);
+			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
+		}
+	}
+	sh /= 9.0;
+
+	if (sh <= 0.0) {
+		discard;
+	}
+	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * sh);
+}

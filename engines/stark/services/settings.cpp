@@ -102,6 +102,8 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// and cast a real shadow. Off by default while it is being built.
 	ConfMan.registerDefault("enable_shadow_mapping", false);
 	ConfMan.registerDefault("shadow_map_debug", false);  // show the shadow map in a corner
+	ConfMan.registerDefault("shadow_map_alpha", 55);     // shadow darkness, percent
+	ConfMan.registerDefault("shadow_map_bias", 20);      // depth bias / 100000 (acne vs peter-panning)
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
 	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
 	// safe kill switch. Also sharpens the detail magnifier.

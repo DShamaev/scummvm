@@ -83,6 +83,8 @@ OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 	_shader = _gfx->createActorShaderInstance();
 	_shadowShader = _gfx->createShadowShaderInstance();
 	_shadowMapShader = _gfx->createShadowMapShaderInstance();
+	_shadowRecvShader = _gfx->createShadowRecvShaderInstance();
+	_shadowRecvVBO = 0;
 }
 
 OpenGLSActorRenderer::~OpenGLSActorRenderer() {
@@ -91,6 +93,11 @@ OpenGLSActorRenderer::~OpenGLSActorRenderer() {
 	delete _shader;
 	delete _shadowShader;
 	delete _shadowMapShader;
+	delete _shadowRecvShader;
+	if (_shadowRecvVBO) {
+		OpenGL::Shader::freeBuffer(_shadowRecvVBO);
+		_shadowRecvVBO = 0;
+	}
 }
 
 void OpenGLSActorRenderer::render(const Math::Vector3d &position, float direction, const LightEntryArray &lights) {
@@ -255,6 +262,14 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	if ((_castsShadow || forceShadows) &&
 	    (StarkScene->shouldRenderShadows() || forceShadows) &&
 	    StarkSettings->getBoolSetting(Settings::kShadow)) {
+
+		// Shadow mapping: cast the shadow by sampling the shadow map on a ground
+		// quad, instead of the jittered silhouette projection. Skips the rest.
+		if (ConfMan.getBool("enable_shadow_mapping") && _gfx->isShadowMapValid()) {
+			renderShadowReceive(position);
+			return;
+		}
+
 		glEnable(GL_BLEND);
 		glEnable(GL_STENCIL_TEST);
 
@@ -442,6 +457,67 @@ void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Mat
 	if (ConfMan.hasKey("shadow_map_debug") && ConfMan.getBool("shadow_map_debug")) {
 		_gfx->debugDrawShadowMap();
 	}
+}
+
+void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
+	if (!_gfx->isShadowMapValid()) {
+		return;
+	}
+
+	// A ground quad on the floor plane under the actor (world is z-up; the floor
+	// is at the actor's feet z). Sized to hold the shadow's reach. The shadow map
+	// lookup decides where within it the shadow actually falls.
+	const float S = 300.0f;
+	float z = position.z();
+	float quad[12] = {
+		position.x() - S, position.y() - S, z,
+		position.x() + S, position.y() - S, z,
+		position.x() - S, position.y() + S, z,
+		position.x() + S, position.y() + S, z
+	};
+	if (!_shadowRecvVBO) {
+		_shadowRecvVBO = OpenGL::Shader::createBuffer(GL_ARRAY_BUFFER, sizeof(quad), quad);
+	} else {
+		glBindBuffer(GL_ARRAY_BUFFER, _shadowRecvVBO);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad), quad);
+	}
+
+	Math::Matrix4 modelView = StarkScene->getViewMatrix();
+	modelView.transpose();
+	Math::Matrix4 proj = StarkScene->getProjectionMatrix();
+	proj.transpose();
+	Math::Matrix4 lightVP = _gfx->getShadowLightViewProj();
+	lightVP.transpose();
+
+	// First cut: draw over the floor region without depth-testing against the
+	// scene (so it isn't rejected by the approximate background depth). Furniture
+	// occlusion comes later via the background depth map (phase 5).
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	_shadowRecvShader->enableVertexAttribute("position", _shadowRecvVBO, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
+	_shadowRecvShader->use(true);
+	_shadowRecvShader->setUniform("modelViewMatrix", modelView);
+	_shadowRecvShader->setUniform("projectionMatrix", proj);
+	_shadowRecvShader->setUniform("lightVP", lightVP);
+	_shadowRecvShader->setUniform("shadowTex", 0);
+	float alpha = CLIP(ConfMan.hasKey("shadow_map_alpha") ? (int)ConfMan.getInt("shadow_map_alpha") : 55, 0, 100) / 100.0f;
+	_shadowRecvShader->setUniform1f("shadowAlpha", alpha);
+	float bias = CLIP(ConfMan.hasKey("shadow_map_bias") ? (int)ConfMan.getInt("shadow_map_bias") : 20, 0, 2000) / 100000.0f;
+	_shadowRecvShader->setUniform1f("shadowBias", bias);
+	_shadowRecvShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture());
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	_shadowRecvShader->unbind();
+
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
 }
 
 void OpenGLSActorRenderer::clearVertices() {
