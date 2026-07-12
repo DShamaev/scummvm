@@ -771,6 +771,24 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 		_shadowDominantIdx = -1;
 		dir = Math::Vector3d(0.0f, 0.0f, -1.0f);
 	}
+
+	// One-shot diagnostic (setInt shadow_debug_log 1): report the chosen light and
+	// the type of every light, so we can see why a scene picks the wrong caster.
+	// LightEntry types: point=1, directional=2, spot=4, ambient=other.
+	if (ConfMan.hasKey("shadow_debug_log") && ConfMan.getInt("shadow_debug_log") > 0) {
+		Common::String info;
+		for (uint i = 0; i < lights.size(); ++i) {
+			info += Common::String::format("[%u]type=%d pos=(%.0f,%.0f,%.0f) dir=(%.2f,%.2f,%.2f) ",
+					i, (int)lights[i]->type,
+					lights[i]->position.x(), lights[i]->position.y(), lights[i]->position.z(),
+					lights[i]->direction.x(), lights[i]->direction.y(), lights[i]->direction.z());
+		}
+		warning("Stark shadow: chosenIdx=%d finalDir=(%.2f,%.2f,%.2f) actorPos=(%.0f,%.0f,%.0f) | %s",
+				_shadowDominantIdx, dir.x(), dir.y(), dir.z(),
+				actorPosition.x(), actorPosition.y(), actorPosition.z(), info.c_str());
+		ConfMan.setInt("shadow_debug_log", 0);
+	}
+
 	return dir;
 }
 
