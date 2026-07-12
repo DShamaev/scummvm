@@ -14,6 +14,8 @@ uniform vec2 magnifyCenter;   // UV point the zoom is centered on (cursor)
 uniform float dofStrength;   // 0 = off; max blur radius in texels
 uniform float dofFocus;      // eye-space focus distance
 uniform float dofRange;      // eye-space distance over which focus falls off
+uniform sampler2D dofTex;    // pre-blurred scene (high-quality path)
+uniform float hqDof;         // 1 = cross-fade toward dofTex instead of ring blur
 uniform float depthZMin;     // eye-space depth encoded at 0 (mask mode)
 uniform float depthZMax;     // eye-space depth encoded at 1 (mask mode)
 uniform float depthNear;     // camera near clip (GL depth mode)
@@ -181,31 +183,43 @@ void main() {
 		color *= 1.0 - ssaoDark;
 	}
 
-	// Debug view 4: show the contact-AO term on its own (red = darkened).
+	// Debug view 4: show the contact-AO term on its own (red = occluded). In the
+	// high-quality path the applied darkening is the strength-scaled, blurred AO,
+	// which reads too faint to inspect; show the raw denoised AO buffer directly
+	// so it's clearly visible regardless of the strength slider.
 	if (debugView > 3.5) {
-		outColor = vec4(clamp(ssaoDark * 4.0, 0.0, 1.0), clamp(ssaoDark * 1.2, 0.0, 1.0), 0.0, 1.0);
+		float aoShow = (hqSSAO > 0.5) ? texture(aoTex, uv).r : ssaoDark;
+		outColor = vec4(clamp(aoShow * 3.0, 0.0, 1.0), clamp(aoShow * 0.9, 0.0, 1.0), 0.0, 1.0);
 		return;
 	}
 
-	// Depth of field: blur by distance from the focus plane. A cheap disc of
-	// samples whose spread grows with the circle of confusion.
+	// Depth of field: blur by distance from the focus plane. The high-quality
+	// path cross-fades toward a pre-blurred half-res buffer (smooth bokeh);
+	// otherwise a cheap 8-tap ring over the sharp image (harsher, fallback).
 	if (dofStrength > 0.0) {
 		float zEye = sceneDepth(uv);
 		float coc = clamp(abs(zEye - dofFocus) / max(dofRange, 0.001), 0.0, 1.0);
 		coc = coc * coc;   // gentler ramp: keep the near-focus zone sharp longer
-		float radius = coc * dofStrength;
 
-		if (radius > 0.5) {
-			vec3 sum = color;
-			float count = 1.0;
-			// 8-tap ring, rotated per pixel to hide the low sample count
-			for (int i = 0; i < 8; i++) {
-				float ang = (float(i) / 8.0) * 6.2831853 + hash(uv) * 6.2831853;
-				vec2 offs = vec2(cos(ang), sin(ang)) * radius * texelSize;
-				sum += texture(sceneTex, uv + offs).rgb;
-				count += 1.0;
+		if (hqDof > 0.5) {
+			// dofStrength (0..64) scales how much of the blur to reach at full CoC,
+			// so the slider still governs overall intensity. 32 -> full at max CoC.
+			float amount = clamp(coc * (dofStrength / 32.0), 0.0, 1.0);
+			color = mix(color, texture(dofTex, uv).rgb, amount);
+		} else {
+			float radius = coc * dofStrength;
+			if (radius > 0.5) {
+				vec3 sum = color;
+				float count = 1.0;
+				// 8-tap ring, rotated per pixel to hide the low sample count
+				for (int i = 0; i < 8; i++) {
+					float ang = (float(i) / 8.0) * 6.2831853 + hash(uv) * 6.2831853;
+					vec2 offs = vec2(cos(ang), sin(ang)) * radius * texelSize;
+					sum += texture(sceneTex, uv + offs).rgb;
+					count += 1.0;
+				}
+				color = sum / count;
 			}
-			color = sum / count;
 		}
 	}
 
