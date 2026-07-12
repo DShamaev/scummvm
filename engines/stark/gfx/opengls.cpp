@@ -636,7 +636,11 @@ void OpenGLSDriver::applyPostProcess() {
 	// Depth source for SSAO / DoF: the real GL depth buffer (includes the
 	// character - best quality) when enabled and available, else the background
 	// depth-mask texture the engine already loads (no character, but never hangs).
-	bool useGLDepth = ConfMan.getBool("enable_depth_copy");
+	// Under supersampling the resolve leaves the engine framebuffer's depth stale
+	// and this GL 2.1 stack can't reliably copy depth out of the supersampled
+	// buffer's packed depth-stencil renderbuffer, so fall back to the world-mask
+	// depth path (which is a normal texture and resolution-independent).
+	bool useGLDepth = ConfMan.getBool("enable_depth_copy") && !_frameSupersampled;
 	bool haveDepth  = useGLDepth || _worldDepthBitmap != nullptr;
 	bool dof        = ConfMan.getBool("enable_depth_of_field") && haveDepth;
 	// Effective SSAO = per-scene base (from post_scenes.json, or the global
@@ -703,20 +707,7 @@ void OpenGLSDriver::applyPostProcess() {
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		}
 		glBindTexture(GL_TEXTURE_2D, _postDepthCopyTex);
-		if (_frameSupersampled && _postFBO) {
-			// When supersampling, the resolve copies only COLOUR into the engine
-			// framebuffer, so its depth is stale. The real scene depth is in
-			// _postFBO's depth buffer at _renderScale x - read from there, at the
-			// game region's supersampled coordinates. Linearised depth is
-			// resolution-independent, so SSAO/DoF sample it fine at normalised UV.
-			int rs = _renderScale;
-			glBindFramebuffer(GL_FRAMEBUFFER, _postFBO);
-			glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-			                 vp.left * rs, glY * rs, vw * rs, vh * rs, 0);
-			glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
-		} else {
-			glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, vp.left, glY, vw, vh, 0);
-		}
+		glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, vp.left, glY, vw, vh, 0);
 	}
 
 	// High-quality bloom: build a wide, smooth bloom in a half-res FBO from the
