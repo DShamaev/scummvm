@@ -16,6 +16,7 @@ uniform float dofFocus;      // eye-space focus distance
 uniform float dofRange;      // eye-space distance over which focus falls off
 uniform sampler2D dofTex;    // pre-blurred scene (high-quality path)
 uniform float hqDof;         // 1 = cross-fade toward dofTex instead of ring blur
+uniform float dofBufBound;   // 1 = the DoF buffer was built/bound this frame (diag)
 uniform float depthZMin;     // eye-space depth encoded at 0 (mask mode)
 uniform float depthZMax;     // eye-space depth encoded at 1 (mask mode)
 uniform float depthNear;     // camera near clip (GL depth mode)
@@ -110,11 +111,16 @@ void main() {
 		return;
 	}
 
-	// Debug view 5: the DoF pre-blur buffer itself. If this looks blurry, the
-	// buffer is fine and any weak effect is the cross-fade amount; if it looks
-	// sharp or black, the buffer/binding is the problem.
+	// Debug view 5: diagnose DoF. BLUE tint = the pre-blur buffer was NOT built
+	// this frame (no usable depth: enable_depth_of_field off or no depth map/copy)
+	// - DoF cannot run. Otherwise show the DoF buffer itself: blurry = buffer good
+	// (any weak effect is the cross-fade amount); sharp = the blur passes failed.
 	if (debugView > 4.5) {
-		outColor = vec4(texture(dofTex, uv).rgb, 1.0);
+		if (dofBufBound < 0.5) {
+			outColor = vec4(color * vec3(0.35, 0.35, 1.0), 1.0);
+		} else {
+			outColor = vec4(texture(dofTex, uv).rgb, 1.0);
+		}
 		return;
 	}
 

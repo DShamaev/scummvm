@@ -800,6 +800,9 @@ void OpenGLSDriver::applyPostProcess() {
 		_postShader->setUniform1f("dofStrength", 0.0f);
 		_postShader->setUniform1f("hqDof", 0.0f);
 	}
+	// Diagnostic: did we actually build+bind the pre-blurred DoF buffer this
+	// frame? (Debug view 5 tints the scene blue when we didn't, i.e. no depth.)
+	_postShader->setUniform1f("dofBufBound", dofBuf ? 1.0f : 0.0f);
 
 	// Bind the depth source(s) for SSAO / DoF. Primary depth on unit 1:
 	//   mode 1 = GL window depth (real, includes the character)
