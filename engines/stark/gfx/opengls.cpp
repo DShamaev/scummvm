@@ -1124,6 +1124,9 @@ int OpenGLSDriver::renderShadowMapBegin() {
 	// Clear to depth = 1.0 (far) encoded in colour: R=255,G=255.
 	glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	// Reset the clear colour to black so it doesn't leak into the engine's own
+	// screen clear next frame (which would paint the UI border strips yellow).
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	return _shadowSize;
 }
 
