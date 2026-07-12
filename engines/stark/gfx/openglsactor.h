@@ -80,10 +80,11 @@ protected:
 
 	Math::Vector3d computeShadowLightDirection(const LightEntryArray &lights, const Math::Vector3d &actorPosition);
 
-	// Temporally-smoothed shadow direction, so it can't snap/flip when the summed
-	// light direction reverses (crossing between opposing lamps) or jitters.
-	Math::Vector3d _smoothedShadowDir;
-	bool _shadowDirInit;
+	// The light index the shadow currently follows. Using the single dominant
+	// light (not the sum of all) stops the shadow flipping when the character
+	// crosses between opposing lamps; hysteresis on this index stops it flickering
+	// when two lights are near-equal.
+	int _shadowDominantIdx;
 
 	bool getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
 			Math::Vector3d &direction, float weight = 1.0f);

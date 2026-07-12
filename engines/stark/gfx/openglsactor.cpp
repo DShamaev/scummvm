@@ -85,7 +85,7 @@ OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 	_shadowMapShader = _gfx->createShadowMapShaderInstance();
 	_shadowRecvShader = _gfx->createShadowRecvShaderInstance();
 	_shadowRecvVBO = 0;
-	_shadowDirInit = false;
+	_shadowDominantIdx = -1;
 }
 
 OpenGLSActorRenderer::~OpenGLSActorRenderer() {
@@ -677,11 +677,17 @@ void OpenGLSActorRenderer::setLightArrayUniform(const LightEntryArray &lights) {
 
 Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntryArray &lights,
                                             const Math::Vector3d &actorPosition) {
-	Math::Vector3d sumDirection;
-	bool hasLight = false;
+	// Follow the SINGLE strongest light, not the sum of all of them. Summing
+	// opposing lamps cancels and reverses the horizontal direction as the
+	// character crosses between them, which is the flip. The dominant light gives
+	// a stable direction within its region.
+	Math::Vector3d bestDir;
+	float bestMag = 0.0f;
+	int bestIdx = -1;
+	Math::Vector3d stickyDir;
+	float stickyMag = 0.0f;
 
-	// Compute the contribution from each lights
-	// The ambient light is skipped intentionally
+	// The ambient light (index 0) is skipped intentionally.
 	for (uint i = 1; i < lights.size(); ++i) {
 		LightEntry *light = lights[i];
 		bool contributes = false;
@@ -702,59 +708,55 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 				break;
 		}
 
-		if (contributes) {
-			sumDirection += lightDirection;
-			hasLight = true;
+		if (!contributes) {
+			continue;
+		}
+		float mag = lightDirection.getMagnitude();
+		if (mag > bestMag) {
+			bestMag = mag;
+			bestDir = lightDirection;
+			bestIdx = (int)i;
+		}
+		if ((int)i == _shadowDominantIdx) {
+			stickyMag = mag;
+			stickyDir = lightDirection;
 		}
 	}
 
-	if (hasLight) {
-		// Clip the horizontal length. The game data caps this very short
-		// (~0.075 world units), which pins the shadow right under the feet even
-		// when a lamp is off to the side. shadow_length_scale (percent) raises
-		// the cap so the shadow can stretch out in the lamp-cast direction,
-		// up to the light geometry's own magnitude.
+	Math::Vector3d dir;
+	if (bestIdx >= 0) {
+		// Hysteresis: stay on the current light unless another is clearly stronger
+		// (>1.4x), so the shadow doesn't flicker where two lamps are near-equal.
+		if (_shadowDominantIdx >= 0 && stickyMag > 0.0f && bestMag < stickyMag * 1.4f) {
+			dir = stickyDir;
+		} else {
+			dir = bestDir;
+			_shadowDominantIdx = bestIdx;
+		}
+
+		// Clip the horizontal length. shadow_length_scale (percent) raises the
+		// game's very short cap so the shadow can stretch in the lamp direction.
 		int scalePercent = ConfMan.hasKey("shadow_length_scale")
 				? CLIP((int)ConfMan.getInt("shadow_length_scale"), 100, 2000) : 600;
 		float maxLen = StarkScene->getMaxShadowLength() * (scalePercent / 100.0f);
 
-		Math::Vector2d horizontalProjection(sumDirection.x(), sumDirection.y());
-		float shadowLength = MIN(horizontalProjection.getMagnitude(), maxLen);
-
-		// Guard against normalizing a near-zero horizontal sum (lights overhead or
-		// cancelling), which amplifies noise into a flipping direction.
-		if (horizontalProjection.getMagnitude() > 0.0001f) {
-			horizontalProjection.normalize();
-			horizontalProjection *= shadowLength;
-			sumDirection.x() = horizontalProjection.getX();
-			sumDirection.y() = horizontalProjection.getY();
+		Math::Vector2d h(dir.x(), dir.y());
+		float shadowLength = MIN(h.getMagnitude(), maxLen);
+		if (h.getMagnitude() > 0.0001f) {
+			h.normalize();
+			h *= shadowLength;
+			dir.x() = h.getX();
+			dir.y() = h.getY();
 		} else {
-			sumDirection.x() = 0;
-			sumDirection.y() = 0;
+			dir.x() = 0;
+			dir.y() = 0;
 		}
-		sumDirection.z() = -1;
+		dir.z() = -1;
 	} else {
-		// Cast from above by default
-		sumDirection.x() = 0;
-		sumDirection.y() = 0;
-		sumDirection.z() = -1;
+		_shadowDominantIdx = -1;
+		dir = Math::Vector3d(0.0f, 0.0f, -1.0f);
 	}
-
-	// Temporal smoothing: ease the horizontal direction between frames so it can
-	// never snap/flip. When April crosses between opposing lamps the target x/y
-	// reverses; smoothing swings the shadow through "overhead" instead of jumping
-	// to the far side. shadow_dir_smooth (percent) sets the responsiveness.
-	if (!_shadowDirInit) {
-		_smoothedShadowDir = sumDirection;
-		_shadowDirInit = true;
-	} else {
-		float s = CLIP(ConfMan.hasKey("shadow_dir_smooth")
-				? (int)ConfMan.getInt("shadow_dir_smooth") : 8, 1, 100) / 100.0f;
-		_smoothedShadowDir.x() = _smoothedShadowDir.x() * (1.0f - s) + sumDirection.x() * s;
-		_smoothedShadowDir.y() = _smoothedShadowDir.y() * (1.0f - s) + sumDirection.y() * s;
-		_smoothedShadowDir.z() = -1.0f;
-	}
-	return _smoothedShadowDir;
+	return dir;
 }
 
 bool OpenGLSActorRenderer::getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
