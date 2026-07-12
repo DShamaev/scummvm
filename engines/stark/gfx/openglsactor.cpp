@@ -490,13 +490,19 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	Math::Matrix4 lightVP = _gfx->getShadowLightViewProj();
 	lightVP.transpose();
 
-	// First cut: draw over the floor region without depth-testing against the
-	// scene (so it isn't rejected by the approximate background depth). Furniture
-	// occlusion comes later via the background depth map (phase 5).
-	glDisable(GL_DEPTH_TEST);
+	// Depth-test the floor quad against the scene so nearer geometry - furniture,
+	// the character's own body - occludes the shadow instead of it painting over
+	// everything. A polygon offset pushes the quad slightly toward the camera so
+	// it isn't rejected by its own (depth-mapped) receiving floor, while genuinely
+	// nearer things still win. Where the scene wrote no depth, the shadow just
+	// draws (graceful fallback).
+	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	float ofs = CLIP(ConfMan.hasKey("shadow_map_depth_bias") ? (int)ConfMan.getInt("shadow_map_depth_bias") : 4, 0, 64);
+	glEnable(GL_POLYGON_OFFSET_FILL);
+	glPolygonOffset(-1.0f, -ofs);
 
 	_shadowRecvShader->enableVertexAttribute("position", _shadowRecvVBO, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0);
 	_shadowRecvShader->use(true);
@@ -518,6 +524,7 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	glBindTexture(GL_TEXTURE_2D, 0);
 	_shadowRecvShader->unbind();
 
+	glDisable(GL_POLYGON_OFFSET_FILL);
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
