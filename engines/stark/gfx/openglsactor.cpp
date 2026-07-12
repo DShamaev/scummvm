@@ -719,6 +719,14 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 			continue;
 		}
 		float mag = lightDirection.getMagnitude();
+		// Bias toward directional lights: window/sun daylight is usually the
+		// intended key/shadow-casting light, but a nearby point lamp can have a
+		// larger raw contribution and wrongly win (Academy: shadow pointed back
+		// toward the window). shadow_key_dir_boost (percent) sets the preference.
+		if (light->type == LightEntry::kDirectional) {
+			mag *= CLIP(ConfMan.hasKey("shadow_key_dir_boost")
+					? (int)ConfMan.getInt("shadow_key_dir_boost") : 300, 100, 2000) / 100.0f;
+		}
 		if (mag > bestMag) {
 			bestMag = mag;
 			bestDir = lightDirection;

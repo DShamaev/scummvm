@@ -100,8 +100,9 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("enable_hq_post", true);
 	// Shadow mapping (WIP): render the character from the light into a shadow map
 	// and cast a real shadow. Off by default while it is being built.
-	ConfMan.registerDefault("enable_shadow_mapping", false);
+	ConfMan.registerDefault("enable_shadow_mapping", true);
 	ConfMan.registerDefault("shadow_map_debug", false);  // show the shadow map in a corner
+	ConfMan.registerDefault("shadow_key_dir_boost", 300); // prefer directional (key/sun) lights for the shadow, %
 	ConfMan.registerDefault("shadow_map_alpha", 55);     // shadow darkness, percent
 	ConfMan.registerDefault("shadow_map_bias", 20);      // depth bias / 100000 (acne vs peter-panning)
 	ConfMan.registerDefault("shadow_map_softness", 2);   // PCF spread in texels (1 = crisp, higher = softer)
