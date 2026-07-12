@@ -606,7 +606,7 @@ void OpenGLSDriver::applyPostProcess() {
 	// The depth debug views need the depth source bound even when SSAO/DoF are
 	// off, so they always reflect the true depth setup rather than stale/unbound
 	// samplers (which read as "everything is background").
-	int debugView   = CLIP(ConfMan.getInt("post_debug_view"), 0, 4);
+	int debugView   = CLIP(ConfMan.getInt("post_debug_view"), 0, 5);
 	bool wantDepth  = dof || ssao || debugView > 0;
 
 	// Nothing to apply: leave the already-rendered frame as-is.
@@ -683,11 +683,14 @@ void OpenGLSDriver::applyPostProcess() {
 	// High-quality depth-of-field: pre-blur the scene into a half-res buffer the
 	// composite cross-fades toward, for smooth bokeh instead of a harsh ring.
 	bool hqDof = grading && hqPost && dof;
-	if (hqDof) {
-		buildDoF(vw, vh, 2);
+	// Build/bind the pre-blurred buffer for the effect, or for debug view 5
+	// (inspect the DoF buffer) even when colour grading is off.
+	bool dofBuf = hqPost && dof && (grading || debugView == 5);
+	if (dofBuf) {
+		buildDoF(vw, vh, 4);
 	}
 
-	if (hqBloom || hqSSAO || hqDof) {
+	if (hqBloom || hqSSAO || dofBuf) {
 		// The FBO passes rebind the default framebuffer but leave a small
 		// viewport; restore the game-viewport region for the final composite.
 		setViewport(Common::Rect(0, Gfx::Driver::kTopBorderHeight,
@@ -785,15 +788,14 @@ void OpenGLSDriver::applyPostProcess() {
 		_postShader->setUniform1f("dofFocus", focus);
 		_postShader->setUniform1f("dofRange", MAX(focus * rangePct, 0.001f));
 		// High-quality path: cross-fade toward the pre-blurred buffer on unit 5.
-		if (hqDof) {
+		// Bind the buffer whenever it was built (effect or debug view 5).
+		if (dofBuf) {
 			glActiveTexture(GL_TEXTURE5);
 			glBindTexture(GL_TEXTURE_2D, _dofTexA);
 			glActiveTexture(GL_TEXTURE0);
 			_postShader->setUniform("dofTex", 5);
-			_postShader->setUniform1f("hqDof", 1.0f);
-		} else {
-			_postShader->setUniform1f("hqDof", 0.0f);
 		}
+		_postShader->setUniform1f("hqDof", hqDof ? 1.0f : 0.0f);
 	} else {
 		_postShader->setUniform1f("dofStrength", 0.0f);
 		_postShader->setUniform1f("hqDof", 0.0f);

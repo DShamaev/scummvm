@@ -110,6 +110,14 @@ void main() {
 		return;
 	}
 
+	// Debug view 5: the DoF pre-blur buffer itself. If this looks blurry, the
+	// buffer is fine and any weak effect is the cross-fade amount; if it looks
+	// sharp or black, the buffer/binding is the problem.
+	if (debugView > 4.5) {
+		outColor = vec4(texture(dofTex, uv).rgb, 1.0);
+		return;
+	}
+
 	// Contact ambient occlusion, depth-only. Thresholds scale with distance so it
 	// works across scenes. The high-quality path samples a pre-computed, denoised
 	// AO buffer; otherwise it is computed inline here.
