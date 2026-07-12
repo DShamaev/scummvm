@@ -866,6 +866,21 @@ void OpenGLSDriver::applyPostProcess() {
 	glBindTexture(GL_TEXTURE_2D, 0);
 	_postShader->unbind();
 
+	// One-shot diagnostic (setInt post_debug_log 1): report the real state of this
+	// post pass to the log, so we can see - rather than guess - which passes ran,
+	// whether depth is present, where the composite drew, and any GL error.
+	if (ConfMan.hasKey("post_debug_log") && ConfMan.getInt("post_debug_log") > 0) {
+		GLint boundFbo = -1;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &boundFbo);
+		GLenum err = glGetError();
+		warning("Stark post: grading=%d hqPost=%d | hqBloom=%d hqSSAO=%d hqDof=%d dofBuf=%d "
+		        "| ssaoEff=%d dof=%d haveDepth=%d worldMask=%d glDepthCopy=%d "
+		        "| debugView=%d vw=%d vh=%d boundFBO=%d glErr=0x%04x",
+		        grading, hqPost, hqBloom, hqSSAO, hqDof, dofBuf, ssaoEff, dof, haveDepth,
+		        _worldDepthBitmap != nullptr, useGLDepth, debugView, vw, vh, boundFbo, (uint)err);
+		ConfMan.setInt("post_debug_log", 0);
+	}
+
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
 }
