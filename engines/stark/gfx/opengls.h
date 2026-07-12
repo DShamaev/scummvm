@@ -173,15 +173,18 @@ private:
 	GLuint _aoTexA;
 	GLuint _aoTexB;
 
-	// High-quality depth-of-field: a single pre-blurred half-res copy of the
-	// scene that the composite cross-fades toward by circle-of-confusion, giving
-	// smooth bokeh instead of the harsh single-pass ring over the sharp image.
+	// High-quality depth-of-field: a pre-blurred copy of the scene at a FIXED
+	// coarse resolution (independent of the physical/Retina viewport) that the
+	// composite cross-fades toward by circle-of-confusion, giving smooth bokeh
+	// instead of the harsh single-pass ring over the sharp image.
 	GLuint _dofTexA;
 	GLuint _dofTexB;
+	int _dofW;
+	int _dofH;
 
 	// Render one fullscreen pass with _blurShader from srcTex into dstTex (bound
-	// to _bloomFbo), at the current _bloomW x _bloomH. mode 1 = bright-pass.
-	void blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dirY, float mode, float threshold);
+	// to _bloomFbo), at w x h. mode 1 = bright-pass.
+	void blurPass(GLuint srcTex, GLuint dstTex, int w, int h, float dirX, float dirY, float mode, float threshold);
 	// Build the bloom texture (_bloomTexA) from the copied scene (_magTex).
 	void buildBloom(int vw, int vh, float threshold);
 	// Build the denoised AO texture (_aoTexA). Depth must already be bound/decided.

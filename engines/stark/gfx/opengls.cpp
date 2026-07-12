@@ -117,7 +117,9 @@ OpenGLSDriver::OpenGLSDriver() :
 	_aoTexA(0),
 	_aoTexB(0),
 	_dofTexA(0),
-	_dofTexB(0) {
+	_dofTexB(0),
+	_dofW(0),
+	_dofH(0) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
@@ -264,11 +266,11 @@ void OpenGLSDriver::getSpriteStampInfo(int &count, float &minEye, float &maxEye)
 	maxEye = _spriteStampMaxEye;
 }
 
-void OpenGLSDriver::blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dirY,
+void OpenGLSDriver::blurPass(GLuint srcTex, GLuint dstTex, int w, int h, float dirX, float dirY,
                             float mode, float threshold) {
 	glBindFramebuffer(GL_FRAMEBUFFER, _bloomFbo);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
-	glViewport(0, 0, _bloomW, _bloomH);
+	glViewport(0, 0, w, h);
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
 
@@ -294,8 +296,8 @@ void OpenGLSDriver::ensureHalfResTargets(int vw, int vh) {
 	if (_bloomTexA && _bloomW == bw && _bloomH == bh) {
 		return;
 	}
-	GLuint *targets[6] = { &_bloomTexA, &_bloomTexB, &_aoTexA, &_aoTexB, &_dofTexA, &_dofTexB };
-	for (int i = 0; i < 6; i++) {
+	GLuint *targets[4] = { &_bloomTexA, &_bloomTexB, &_aoTexA, &_aoTexB };
+	for (int i = 0; i < 4; i++) {
 		if (*targets[i]) glDeleteTextures(1, targets[i]);
 		glGenTextures(1, targets[i]);
 		glBindTexture(GL_TEXTURE_2D, *targets[i]);
@@ -315,12 +317,12 @@ void OpenGLSDriver::buildBloom(int vw, int vh, float threshold) {
 
 	// Bright-pass the scene into A, then two separable Gaussian iterations
 	// (H into B, V into A) for a wide, smooth bloom. Half resolution.
-	blurPass(_magTex, _bloomTexA, 0.0f, 0.0f, 1.0f, threshold);
+	blurPass(_magTex, _bloomTexA, _bloomW, _bloomH, 0.0f, 0.0f, 1.0f, threshold);
 	float dx = 1.0f / (float)_bloomW;
 	float dy = 1.0f / (float)_bloomH;
 	for (int i = 0; i < 2; i++) {
-		blurPass(_bloomTexA, _bloomTexB, dx, 0.0f, 0.0f, 0.0f);
-		blurPass(_bloomTexB, _bloomTexA, 0.0f, dy, 0.0f, 0.0f);
+		blurPass(_bloomTexA, _bloomTexB, _bloomW, _bloomH, dx, 0.0f, 0.0f, 0.0f);
+		blurPass(_bloomTexB, _bloomTexA, _bloomW, _bloomH, 0.0f, dy, 0.0f, 0.0f);
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -369,26 +371,50 @@ void OpenGLSDriver::buildSSAO(int vw, int vh, float radius, float dynamicOnly) {
 	// Denoise: separable blur A -> B -> A.
 	float dx = 1.0f / (float)_bloomW;
 	float dy = 1.0f / (float)_bloomH;
-	blurPass(_aoTexA, _aoTexB, dx, 0.0f, 0.0f, 0.0f);
-	blurPass(_aoTexB, _aoTexA, 0.0f, dy, 0.0f, 0.0f);
+	blurPass(_aoTexA, _aoTexB, _bloomW, _bloomH, dx, 0.0f, 0.0f, 0.0f);
+	blurPass(_aoTexB, _aoTexA, _bloomW, _bloomH, 0.0f, dy, 0.0f, 0.0f);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void OpenGLSDriver::buildDoF(int vw, int vh, int iterations) {
-	ensureHalfResTargets(vw, vh);
+	// DoF blur buffer at a FIXED coarse resolution (~256 px wide) regardless of
+	// the physical viewport. On a 3x Retina panel "half res" is ~1000 px, where a
+	// few blur iterations span only a handful of physical pixels and read as
+	// sharp. Anchoring to ~256 px makes the same iterations cover a large, fixed
+	// fraction of the screen, and the big upscale to the real framebuffer adds
+	// even more softness - a genuinely out-of-focus look on any display.
+	int div = MAX(1, (vw + 255) / 256);
+	int dw = MAX(vw / div, 1);
+	int dh = MAX(vh / div, 1);
+	if (!_bloomFbo) {
+		glGenFramebuffers(1, &_bloomFbo);
+	}
+	if (!_dofTexA || _dofW != dw || _dofH != dh) {
+		GLuint *t[2] = { &_dofTexA, &_dofTexB };
+		for (int i = 0; i < 2; i++) {
+			if (*t[i]) glDeleteTextures(1, t[i]);
+			glGenTextures(1, t[i]);
+			glBindTexture(GL_TEXTURE_2D, *t[i]);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, dw, dh, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		glBindTexture(GL_TEXTURE_2D, 0);
+		_dofW = dw;
+		_dofH = dh;
+	}
 
-	// Pre-blur the scene into _dofTexA: bright-pass mode 0 (plain copy+blur) from
-	// the copied frame, then N separable Gaussian iterations. The composite then
-	// cross-fades the sharp frame toward this by circle-of-confusion, so out-of-
-	// focus regions get a genuinely smooth blur instead of an 8-tap ring of the
-	// sharp image. Half resolution keeps it cheap and adds to the softness.
-	blurPass(_magTex, _dofTexA, 0.0f, 0.0f, 0.0f, 0.0f);
-	float dx = 1.0f / (float)_bloomW;
-	float dy = 1.0f / (float)_bloomH;
+	// Downsample the scene into _dofTexA (mode 0, zero direction = copy), then N
+	// separable Gaussian iterations at the coarse resolution.
+	blurPass(_magTex, _dofTexA, dw, dh, 0.0f, 0.0f, 0.0f, 0.0f);
+	float dx = 1.0f / (float)dw;
+	float dy = 1.0f / (float)dh;
 	for (int i = 0; i < iterations; i++) {
-		blurPass(_dofTexA, _dofTexB, dx, 0.0f, 0.0f, 0.0f);
-		blurPass(_dofTexB, _dofTexA, 0.0f, dy, 0.0f, 0.0f);
+		blurPass(_dofTexA, _dofTexB, dw, dh, dx, 0.0f, 0.0f, 0.0f);
+		blurPass(_dofTexB, _dofTexA, dw, dh, 0.0f, dy, 0.0f, 0.0f);
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
