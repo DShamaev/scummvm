@@ -106,6 +106,7 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("shadow_map_bias", 20);      // depth bias / 100000 (acne vs peter-panning)
 	ConfMan.registerDefault("shadow_map_softness", 2);   // PCF spread in texels (1 = crisp, higher = softer)
 	ConfMan.registerDefault("shadow_map_depth_bias", 4); // polygon offset so furniture occludes the floor shadow
+	ConfMan.registerDefault("shadow_wall", true);        // drape the shadow over walls/furniture via the depth map
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
 	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
 	// safe kill switch. Also sharpens the detail magnifier.

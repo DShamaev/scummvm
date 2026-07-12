@@ -125,6 +125,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_postDrawFbo(0),
 	_shadowMapShader(nullptr),
 	_shadowRecvShader(nullptr),
+	_shadowBgShader(nullptr),
 	_shadowFbo(0),
 	_shadowTex(0),
 	_shadowDepthRBO(0),
@@ -151,6 +152,7 @@ OpenGLSDriver::~OpenGLSDriver() {
 	if (_shadowFbo) { glDeleteFramebuffers(1, &_shadowFbo); _shadowFbo = 0; }
 	delete _shadowMapShader;
 	delete _shadowRecvShader;
+	delete _shadowBgShader;
 	delete _blurShader;
 	delete _ssaoShader;
 	delete _postShader;
@@ -188,6 +190,9 @@ void OpenGLSDriver::init() {
 
 	static const char* shadowRecvAttributes[] = { "position", nullptr };
 	_shadowRecvShader = OpenGL::Shader::fromFiles("stark_shadowrecv", shadowRecvAttributes);
+
+	static const char* shadowBgAttributes[] = { "position", "texcoord", nullptr };
+	_shadowBgShader = OpenGL::Shader::fromFiles("stark_shadowbg", shadowBgAttributes);
 
 	static const char* fadeAttributes[] = { "position", nullptr };
 	_fadeShader = OpenGL::Shader::fromFiles("stark_fade", fadeAttributes);
@@ -443,6 +448,12 @@ void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax) {
 	_worldDepthBitmap = depth;
 	_worldDepthZMin = zMin;
 	_worldDepthZMax = zMax;
+}
+
+void OpenGLSDriver::bindWorldDepth() const {
+	if (_worldDepthBitmap) {
+		_worldDepthBitmap->bind();
+	}
 }
 
 void OpenGLSDriver::getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const {
@@ -1076,6 +1087,10 @@ OpenGL::Shader *OpenGLSDriver::createShadowMapShaderInstance() {
 
 OpenGL::Shader *OpenGLSDriver::createShadowRecvShaderInstance() {
 	return _shadowRecvShader->clone();
+}
+
+OpenGL::Shader *OpenGLSDriver::createShadowBgShaderInstance() {
+	return _shadowBgShader->clone();
 }
 
 int OpenGLSDriver::renderShadowMapBegin() {

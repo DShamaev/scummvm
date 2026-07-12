@@ -67,6 +67,7 @@ public:
 	OpenGL::Shader *createShadowShaderInstance();
 	OpenGL::Shader *createShadowMapShaderInstance();
 	OpenGL::Shader *createShadowRecvShaderInstance();
+	OpenGL::Shader *createShadowBgShaderInstance();
 
 	/**
 	 * Shadow mapping. renderShadowMapBegin binds an offscreen buffer and returns
@@ -81,6 +82,13 @@ public:
 	GLuint getShadowMapTexture() const { return _shadowValid ? _shadowTex : 0; }
 	Math::Matrix4 getShadowLightViewProj() const { return _shadowLightVP; }
 	bool isShadowMapValid() const { return _shadowValid; }
+
+	/** The current location's background depth mask (no character), for the
+	 *  screen-space shadow that drapes onto walls/furniture. bind() binds it. */
+	bool hasWorldDepth() const { return _worldDepthBitmap != nullptr; }
+	void bindWorldDepth() const;
+	float getWorldDepthZMin() const { return _worldDepthZMin; }
+	float getWorldDepthZMax() const { return _worldDepthZMax; }
 	/** Debug: draw the shadow map to the screen corner (shadow_map_debug). */
 	void debugDrawShadowMap();
 
@@ -142,6 +150,7 @@ private:
 	OpenGL::Shader *_shadowShader;
 	OpenGL::Shader *_shadowMapShader;
 	OpenGL::Shader *_shadowRecvShader;
+	OpenGL::Shader *_shadowBgShader;
 
 	// Shadow mapping: the caster (April) is rendered from the light into this
 	// offscreen buffer as depth-encoded-in-colour, then receivers sample it.

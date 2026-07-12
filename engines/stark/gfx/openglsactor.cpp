@@ -84,7 +84,9 @@ OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 	_shadowShader = _gfx->createShadowShaderInstance();
 	_shadowMapShader = _gfx->createShadowMapShaderInstance();
 	_shadowRecvShader = _gfx->createShadowRecvShaderInstance();
+	_shadowBgShader = _gfx->createShadowBgShaderInstance();
 	_shadowRecvVBO = 0;
+	_shadowBgVBO = 0;
 	_shadowDominantIdx = -1;
 }
 
@@ -95,9 +97,14 @@ OpenGLSActorRenderer::~OpenGLSActorRenderer() {
 	delete _shadowShader;
 	delete _shadowMapShader;
 	delete _shadowRecvShader;
+	delete _shadowBgShader;
 	if (_shadowRecvVBO) {
 		OpenGL::Shader::freeBuffer(_shadowRecvVBO);
 		_shadowRecvVBO = 0;
+	}
+	if (_shadowBgVBO) {
+		OpenGL::Shader::freeBuffer(_shadowBgVBO);
+		_shadowBgVBO = 0;
 	}
 }
 
@@ -460,9 +467,85 @@ void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Mat
 	}
 }
 
+bool OpenGLSActorRenderer::renderShadowBackground() {
+	if (!_gfx->isShadowMapValid() || !_gfx->hasWorldDepth()) {
+		return false;
+	}
+
+	// Fullscreen NDC quad + UV.
+	if (!_shadowBgVBO) {
+		static const float quad[16] = {
+			-1.0f,  1.0f,  0.0f, 1.0f,
+			 1.0f,  1.0f,  1.0f, 1.0f,
+			-1.0f, -1.0f,  0.0f, 0.0f,
+			 1.0f, -1.0f,  1.0f, 0.0f
+		};
+		_shadowBgVBO = OpenGL::Shader::createBuffer(GL_ARRAY_BUFFER, sizeof(quad), quad);
+	}
+
+	// Projection x/y scale (frustum diagonal, unchanged by the GL transpose) for
+	// the eye-space reconstruction, and the inverse view (eye -> world).
+	Math::Matrix4 projection = StarkScene->getProjectionMatrix();
+	float projSX = projection(0, 0);
+	float projSY = projection(1, 1);
+
+	Math::Matrix4 invView = StarkScene->getViewMatrix();
+	invView.inverse();
+	invView.transpose();
+
+	Math::Matrix4 lightVP = _gfx->getShadowLightViewProj();
+	lightVP.transpose();
+
+	// First cut: no scene depth-test yet (validate the reconstruction first; the
+	// character may briefly self-shadow until occlusion is added).
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	_shadowBgShader->enableVertexAttribute("position", _shadowBgVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+	_shadowBgShader->enableVertexAttribute("texcoord", _shadowBgVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
+	_shadowBgShader->use(true);
+	_shadowBgShader->setUniform("shadowTex", 0);
+	_shadowBgShader->setUniform("bgDepthTex", 1);
+	_shadowBgShader->setUniform1f("zMin", _gfx->getWorldDepthZMin());
+	_shadowBgShader->setUniform1f("zMax", _gfx->getWorldDepthZMax());
+	_shadowBgShader->setUniform("projScale", Math::Vector2d(projSX, projSY));
+	_shadowBgShader->setUniform("invView", invView);
+	_shadowBgShader->setUniform("lightVP", lightVP);
+	float alpha = CLIP(ConfMan.hasKey("shadow_map_alpha") ? (int)ConfMan.getInt("shadow_map_alpha") : 55, 0, 100) / 100.0f;
+	_shadowBgShader->setUniform1f("shadowAlpha", alpha);
+	float bias = CLIP(ConfMan.hasKey("shadow_map_bias") ? (int)ConfMan.getInt("shadow_map_bias") : 20, 0, 2000) / 100000.0f;
+	_shadowBgShader->setUniform1f("shadowBias", bias);
+	float soft = CLIP(ConfMan.hasKey("shadow_map_softness") ? (int)ConfMan.getInt("shadow_map_softness") : 2, 1, 40);
+	_shadowBgShader->setUniform1f("shadowSoftness", soft);
+	_shadowBgShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
+
+	glActiveTexture(GL_TEXTURE1);
+	_gfx->bindWorldDepth();
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture());
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	_shadowBgShader->unbind();
+
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	return true;
+}
+
 void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	if (!_gfx->isShadowMapValid()) {
 		return;
+	}
+
+	// Prefer draping the shadow over the depth-mapped background (walls/furniture)
+	// when a depth mask exists; fall back to the flat ground quad otherwise.
+	if (!ConfMan.hasKey("shadow_wall") || ConfMan.getBool("shadow_wall")) {
+		if (renderShadowBackground()) {
+			return;
+		}
 	}
 
 	// A ground quad on the floor plane under the actor (world is z-up; the floor

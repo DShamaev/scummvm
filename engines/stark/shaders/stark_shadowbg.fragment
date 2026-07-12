@@ -1,0 +1,69 @@
+OUTPUT
+
+in vec2 vUV;
+
+// Background depth mask (no character; top-origin loaded texture) + its calibrated
+// eye-space range. Used to reconstruct the 3D world position of the pre-rendered
+// background (floor, walls, furniture) at each pixel, so the shadow drapes over it.
+uniform sampler2D bgDepthTex;
+uniform float zMin;
+uniform float zMax;
+uniform vec2 projScale;   // (proj[0][0], proj[1][1]) - eye-space x/y reconstruction
+uniform mat4 invView;     // eye space -> world space
+uniform mat4 lightVP;     // world -> light clip space
+
+uniform sampler2D shadowTex;  // depth-in-colour shadow map
+uniform float shadowAlpha;
+uniform float shadowBias;
+uniform vec2 shadowTexel;
+uniform float shadowSoftness;
+
+float decodeMask(vec2 uv) {
+	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y)); // mask is top-origin
+	return (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
+}
+
+float occluderDepth(vec2 uv) {
+	vec4 c = texture(shadowTex, uv);
+	return (c.r * 255.0 * 256.0 + c.g * 255.0) / 65535.0;
+}
+
+void main() {
+	float norm = decodeMask(vUV);
+	float eyeZ = mix(zMin, zMax, norm);      // eye-space distance (positive)
+
+	// Reconstruct the eye-space position of the background at this pixel. The
+	// camera looks down -z, so a point at distance eyeZ has eye z = -eyeZ, and
+	// its x/y come from the screen NDC scaled by the projection.
+	vec2 ndc = vUV * 2.0 - 1.0;
+	vec3 eyePos;
+	eyePos.z = -eyeZ;
+	eyePos.x = ndc.x * eyeZ / projScale.x;
+	eyePos.y = ndc.y * eyeZ / projScale.y;
+
+	vec4 world = invView * vec4(eyePos, 1.0);
+	vec4 lc = lightVP * world;
+	vec3 lndc = lc.xyz / lc.w;
+	vec2 suv = lndc.xy * 0.5 + 0.5;
+
+	// Outside the shadow map (light frustum) => not shadowed.
+	if (suv.x < 0.01 || suv.x > 0.99 || suv.y < 0.01 || suv.y > 0.99) {
+		discard;
+	}
+	float fragDepth = lndc.z * 0.5 + 0.5;
+
+	vec2 stepv = shadowTexel * shadowSoftness;
+	float sh = 0.0;
+	for (int y = -2; y <= 2; y++) {
+		for (int x = -2; x <= 2; x++) {
+			float od = occluderDepth(suv + vec2(float(x), float(y)) * stepv);
+			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
+		}
+	}
+	sh /= 25.0;
+
+	if (sh <= 0.0) {
+		discard;
+	}
+	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * sh);
+}
