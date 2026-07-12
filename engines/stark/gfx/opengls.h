@@ -30,6 +30,8 @@
 
 #include "graphics/opengl/system_headers.h"
 
+#include "math/matrix4.h"
+
 namespace OpenGL {
 class Shader;
 }
@@ -63,6 +65,23 @@ public:
 	OpenGL::Shader *createSurfaceFillShaderInstance();
 	OpenGL::Shader *createFadeShaderInstance();
 	OpenGL::Shader *createShadowShaderInstance();
+	OpenGL::Shader *createShadowMapShaderInstance();
+
+	/**
+	 * Shadow mapping. renderShadowMapBegin binds an offscreen buffer and returns
+	 * the size to render the caster into (depth-encoded-in-colour); the caller
+	 * draws the caster with the shadow-map shader, then renderShadowMapEnd stores
+	 * the result + light matrix and restores the engine framebuffer. Receivers
+	 * read getShadowMapTexture()/getShadowLightViewProj(). No-op / invalid when
+	 * shadow mapping is disabled or the FBO is incomplete.
+	 */
+	int renderShadowMapBegin();
+	void renderShadowMapEnd(const Math::Matrix4 &lightViewProj);
+	GLuint getShadowMapTexture() const { return _shadowValid ? _shadowTex : 0; }
+	Math::Matrix4 getShadowLightViewProj() const { return _shadowLightVP; }
+	bool isShadowMapValid() const { return _shadowValid; }
+	/** Debug: draw the shadow map to the screen corner (shadow_map_debug). */
+	void debugDrawShadowMap();
 
 	void start2DMode();
 	void end2DMode();
@@ -120,6 +139,16 @@ private:
 	OpenGL::Shader *_actorShader;
 	OpenGL::Shader *_fadeShader;
 	OpenGL::Shader *_shadowShader;
+	OpenGL::Shader *_shadowMapShader;
+
+	// Shadow mapping: the caster (April) is rendered from the light into this
+	// offscreen buffer as depth-encoded-in-colour, then receivers sample it.
+	GLuint _shadowFbo;
+	GLuint _shadowTex;
+	GLuint _shadowDepthRBO;
+	int _shadowSize;
+	Math::Matrix4 _shadowLightVP;
+	bool _shadowValid;
 	GLuint _surfaceVBO;
 	GLuint _fadeVBO;
 

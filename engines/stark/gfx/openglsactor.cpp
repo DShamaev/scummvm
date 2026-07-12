@@ -26,6 +26,7 @@
 #include "engines/stark/resources/location.h"
 
 #include "common/config-manager.h"
+#include "math/glmath.h"
 #include "engines/stark/scene.h"
 #include "engines/stark/services/global.h"
 #include "engines/stark/services/services.h"
@@ -81,6 +82,7 @@ OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 		_faceVBO(0) {
 	_shader = _gfx->createActorShaderInstance();
 	_shadowShader = _gfx->createShadowShaderInstance();
+	_shadowMapShader = _gfx->createShadowMapShaderInstance();
 }
 
 OpenGLSActorRenderer::~OpenGLSActorRenderer() {
@@ -88,6 +90,7 @@ OpenGLSActorRenderer::~OpenGLSActorRenderer() {
 
 	delete _shader;
 	delete _shadowShader;
+	delete _shadowMapShader;
 }
 
 void OpenGLSActorRenderer::render(const Math::Vector3d &position, float direction, const LightEntryArray &lights) {
@@ -116,6 +119,11 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 
 	Math::Matrix4 normalMatrix = modelViewMatrix;
 	normalMatrix.invertAffineOrthonormal();
+
+	// Shadow mapping (Phase 1): render this actor from the light into the shadow
+	// map before the main draw. Self-contained (binds/restores the FBO), so the
+	// main shader setup below is unaffected. No-op when disabled.
+	renderShadowMap(model, position, lights);
 
 	_shader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
 	_shader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
@@ -360,6 +368,79 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 		glDisable(GL_STENCIL_TEST);
 
 		_shadowShader->unbind();
+	}
+}
+
+void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Math::Vector3d &position,
+		const LightEntryArray &lights) {
+	int size = _gfx->renderShadowMapBegin();
+	if (size == 0) {
+		return; // shadow mapping disabled or FBO unavailable
+	}
+
+	// World-space light direction (light travels along L; z = -1 is downward).
+	Math::Vector3d L = computeShadowLightDirection(lights, position);
+	if (L.getMagnitude() < 0.001f) {
+		L = Math::Vector3d(0.0f, 0.0f, -1.0f);
+	}
+	L.normalize();
+
+	// Frame the actor: look at a point near its mid-height, from up the light.
+	// Extents are first-pass guesses in world units, tuned via the debug view.
+	float dist = 400.0f;
+	Math::Vector3d center = position;
+	center.z() += 90.0f;
+	Math::Vector3d eye = center - L * dist;
+	Math::Vector3d up(0.0f, 0.0f, 1.0f);
+	if (ABS(L.z()) > 0.99f) {
+		up = Math::Vector3d(0.0f, 1.0f, 0.0f);
+	}
+
+	// Build the light view the same way scene.cpp builds its view matrix.
+	Math::Matrix4 lightView = Math::makeLookAtMatrix(eye, center, up);
+	lightView.transpose();
+	lightView.translate(-eye);
+
+	// Orthographic projection built like makeFrustumMatrix (same operator()
+	// positions), then transposed like scene._projectionMatrix.
+	float halfExtent = 150.0f;
+	float nearZ = 1.0f;
+	float farZ = 2.0f * dist;
+	Math::Matrix4 lightProj;
+	lightProj(0, 0) = 1.0f / halfExtent;
+	lightProj(1, 1) = 1.0f / halfExtent;
+	lightProj(2, 2) = -2.0f / (farZ - nearZ);
+	lightProj(3, 2) = -(farZ + nearZ) / (farZ - nearZ);
+	lightProj.transpose();
+
+	Math::Matrix4 lightViewProj = lightProj * lightView;
+	Math::Matrix4 lightMVP = lightViewProj * model;
+	lightMVP.transpose();
+
+	_shadowMapShader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
+	_shadowMapShader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
+	_shadowMapShader->enableVertexAttribute("bone1", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 24);
+	_shadowMapShader->enableVertexAttribute("bone2", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 28);
+	_shadowMapShader->enableVertexAttribute("boneWeight", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 32);
+	_shadowMapShader->use(true);
+	_shadowMapShader->setUniform("lightMVP", lightMVP);
+	setBoneRotationArrayUniform(_shadowMapShader, "boneRotation");
+	setBonePositionArrayUniform(_shadowMapShader, "bonePosition");
+
+	Common::Array<Face *> faces = _model->getFaces();
+	for (Common::Array<Face *>::const_iterator face = faces.begin(); face != faces.end(); ++face) {
+		GLuint ebo = _faceEBO[*face];
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+		glDrawElements(GL_TRIANGLES, (*face)->vertexIndices.size(), GL_UNSIGNED_INT, 0);
+	}
+	_shadowMapShader->unbind();
+
+	// Store the world->light-clip matrix (pre final transpose) for receivers.
+	_gfx->renderShadowMapEnd(lightViewProj);
+
+	// Debug: show the shadow map in the screen corner to verify the caster.
+	if (ConfMan.hasKey("shadow_map_debug") && ConfMan.getBool("shadow_map_debug")) {
+		_gfx->debugDrawShadowMap();
 	}
 }
 

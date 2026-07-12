@@ -1,0 +1,32 @@
+in vec3 position1;
+in vec3 position2;
+in float bone1;
+in float bone2;
+in float boneWeight;
+
+const int maxBones = 70;
+
+// lightViewProj * model: takes a skinned model-space vertex straight to the
+// light's clip space.
+uniform mat4 lightMVP;
+uniform vec4 boneRotation[maxBones];
+uniform vec3 bonePosition[maxBones];
+
+out float vDepth;   // linear light-space depth, [0,1]
+
+vec3 qrot(vec4 q, vec3 v) {
+	return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+
+void main() {
+	// Same skinning as the projection shadow, so the caster matches the mesh.
+	vec3 b1 = qrot(boneRotation[int(bone1)], position1) + bonePosition[int(bone1)];
+	vec3 b2 = qrot(boneRotation[int(bone2)], position2) + bonePosition[int(bone2)];
+	vec3 modelPosition = mix(b2, b1, boneWeight);
+
+	vec4 clip = lightMVP * vec4(modelPosition, 1.0);
+	gl_Position = clip;
+
+	// Orthographic light: clip.z / clip.w is linear in [-1, 1]; store as [0, 1].
+	vDepth = clip.z / clip.w * 0.5 + 0.5;
+}

@@ -98,6 +98,10 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// Multi-pass FBO post: wide, smooth bloom (bright-pass + separable Gaussian)
 	// instead of the single-pass inline bloom. Now that FBOs work on this stack.
 	ConfMan.registerDefault("enable_hq_post", true);
+	// Shadow mapping (WIP): render the character from the light into a shadow map
+	// and cast a real shadow. Off by default while it is being built.
+	ConfMan.registerDefault("enable_shadow_mapping", false);
+	ConfMan.registerDefault("shadow_map_debug", false);  // show the shadow map in a corner
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
 	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
 	// safe kill switch. Also sharpens the detail magnifier.

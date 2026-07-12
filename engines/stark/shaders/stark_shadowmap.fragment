@@ -1,0 +1,14 @@
+OUTPUT
+
+in float vDepth;
+
+// Pack the linear light-space depth into R (high byte) + G (low byte) for 16-bit
+// precision, because sampleable DEPTH textures are unreliable on this GL 2.1
+// stack. The receiver decodes (R*256 + G)/65535 and compares.
+void main() {
+	float d = clamp(vDepth, 0.0, 1.0);
+	float v = d * 65535.0;
+	float hi = floor(v / 256.0);
+	float lo = v - hi * 256.0;
+	outColor = vec4(hi / 255.0, lo / 255.0, 0.0, 1.0);
+}

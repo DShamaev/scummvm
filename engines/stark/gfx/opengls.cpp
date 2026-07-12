@@ -122,7 +122,13 @@ OpenGLSDriver::OpenGLSDriver() :
 	_dofTexB(0),
 	_dofW(0),
 	_dofH(0),
-	_postDrawFbo(0) {
+	_postDrawFbo(0),
+	_shadowMapShader(nullptr),
+	_shadowFbo(0),
+	_shadowTex(0),
+	_shadowDepthRBO(0),
+	_shadowSize(1024),
+	_shadowValid(false) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
@@ -139,6 +145,10 @@ OpenGLSDriver::~OpenGLSDriver() {
 	if (_dofTexA) { glDeleteTextures(1, &_dofTexA); _dofTexA = 0; }
 	if (_dofTexB) { glDeleteTextures(1, &_dofTexB); _dofTexB = 0; }
 	if (_bloomFbo) { glDeleteFramebuffers(1, &_bloomFbo); _bloomFbo = 0; }
+	if (_shadowTex) { glDeleteTextures(1, &_shadowTex); _shadowTex = 0; }
+	if (_shadowDepthRBO) { glDeleteRenderbuffers(1, &_shadowDepthRBO); _shadowDepthRBO = 0; }
+	if (_shadowFbo) { glDeleteFramebuffers(1, &_shadowFbo); _shadowFbo = 0; }
+	delete _shadowMapShader;
 	delete _blurShader;
 	delete _ssaoShader;
 	delete _postShader;
@@ -172,6 +182,7 @@ void OpenGLSDriver::init() {
 
 	static const char* shadowAttributes[] = { "position1", "position2", "bone1", "bone2", "boneWeight", nullptr };
 	_shadowShader = OpenGL::Shader::fromFiles("stark_shadow", shadowAttributes);
+	_shadowMapShader = OpenGL::Shader::fromFiles("stark_shadowmap", shadowAttributes);
 
 	static const char* fadeAttributes[] = { "position", nullptr };
 	_fadeShader = OpenGL::Shader::fromFiles("stark_fade", fadeAttributes);
@@ -1052,6 +1063,109 @@ OpenGL::Shader *OpenGLSDriver::createFadeShaderInstance() {
 
 OpenGL::Shader *OpenGLSDriver::createShadowShaderInstance() {
 	return _shadowShader->clone();
+}
+
+OpenGL::Shader *OpenGLSDriver::createShadowMapShaderInstance() {
+	return _shadowMapShader->clone();
+}
+
+int OpenGLSDriver::renderShadowMapBegin() {
+	_shadowValid = false;
+	if (!ConfMan.getBool("enable_shadow_mapping")) {
+		return 0;
+	}
+
+	// Create the shadow FBO once: an RGBA colour texture (depth-encoded) plus a
+	// depth renderbuffer for the caster's own depth test.
+	if (!_shadowFbo) {
+		glGenFramebuffers(1, &_shadowFbo);
+		glGenTextures(1, &_shadowTex);
+		glBindTexture(GL_TEXTURE_2D, _shadowTex);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, _shadowSize, _shadowSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glGenRenderbuffers(1, &_shadowDepthRBO);
+		glBindRenderbuffer(GL_RENDERBUFFER, _shadowDepthRBO);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, _shadowSize, _shadowSize);
+		glBindFramebuffer(GL_FRAMEBUFFER, _shadowFbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _shadowTex, 0);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _shadowDepthRBO);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			warning("Stark: shadow-map FBO incomplete, disabling shadow mapping");
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glDeleteFramebuffers(1, &_shadowFbo); _shadowFbo = 0;
+			glDeleteTextures(1, &_shadowTex); _shadowTex = 0;
+			glDeleteRenderbuffers(1, &_shadowDepthRBO); _shadowDepthRBO = 0;
+			return 0;
+		}
+	}
+
+	// Remember the engine framebuffer to restore afterwards (the backend renders
+	// into its own FBO, not 0 - the lesson from the post pipeline).
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &_postDrawFbo);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, _shadowFbo);
+	glViewport(0, 0, _shadowSize, _shadowSize);
+	glDisable(GL_SCISSOR_TEST);
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	// Clear to depth = 1.0 (far) encoded in colour: R=255,G=255.
+	glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	return _shadowSize;
+}
+
+void OpenGLSDriver::renderShadowMapEnd(const Math::Matrix4 &lightViewProj) {
+	_shadowLightVP = lightViewProj;
+	_shadowValid = true;
+	// Restore the engine framebuffer and the game viewport.
+	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
+	setViewport(_unscaledViewport);
+}
+
+void OpenGLSDriver::debugDrawShadowMap() {
+	if (!_shadowValid || !_postShader) {
+		return;
+	}
+	// Draw the shadow map into a small square in the top-left of the screen so we
+	// can verify the caster renders. Uses the post shader with everything off.
+	int side = MIN(g_system->getWidth(), g_system->getHeight()) / 3;
+	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
+	glViewport(0, g_system->getHeight() - side, side, side);
+	glDisable(GL_SCISSOR_TEST);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_BLEND);
+	_postShader->use();
+	_postShader->setUniform("sceneTex", 0);
+	_postShader->setUniform1f("magnify", 1.0f);
+	_postShader->setUniform1f("debugView", 0.0f);
+	_postShader->setUniform1f("dofStrength", 0.0f);
+	_postShader->setUniform1f("ssaoStrength", 0.0f);
+	_postShader->setUniform1f("bloomStrength", 0.0f);
+	_postShader->setUniform1f("vignetteStrength", 0.0f);
+	_postShader->setUniform1f("grainStrength", 0.0f);
+	_postShader->setUniform1f("sharpenStrength", 0.0f);
+	_postShader->setUniform1f("tonemapStrength", 0.0f);
+	_postShader->setUniform1f("hqBloom", 0.0f);
+	_postShader->setUniform1f("hqSSAO", 0.0f);
+	_postShader->setUniform1f("hqDof", 0.0f);
+	_postShader->setUniform1f("dofBufBound", 0.0f);
+	_postShader->setUniform1f("gradeBrightness", 0.0f);
+	_postShader->setUniform1f("gradeContrast", 1.0f);
+	_postShader->setUniform1f("gradeSaturation", 1.0f);
+	_postShader->setUniform("gradeTint", Math::Vector3d(1.0f, 1.0f, 1.0f));
+	_postShader->setUniform("texelSize", Math::Vector2d(1.0f / _shadowSize, 1.0f / _shadowSize));
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, _shadowTex);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	_postShader->unbind();
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
 }
 
 Graphics::Surface *OpenGLSDriver::getViewportScreenshot() const {

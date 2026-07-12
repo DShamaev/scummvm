@@ -52,10 +52,16 @@ protected:
 	typedef Common::HashMap<Face *, GLuint> FaceBufferMap;
 
 	OpenGLSDriver *_gfx;
-	OpenGL::Shader *_shader, *_shadowShader;
+	OpenGL::Shader *_shader, *_shadowShader, *_shadowMapShader;
 
 	GLuint _faceVBO;
 	FaceBufferMap _faceEBO;
+
+	// Shadow mapping: render this actor from the light into the driver's shadow
+	// map (depth-encoded-in-colour) before the main draw, so receivers can sample
+	// it. Builds an orthographic light view-projection framing the actor.
+	void renderShadowMap(const Math::Matrix4 &model, const Math::Vector3d &position,
+			const LightEntryArray &lights);
 
 	void clearVertices();
 	void uploadVertices();
