@@ -755,17 +755,20 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 			_shadowDominantIdx = bestIdx;
 		}
 
-		// Clip the horizontal length. shadow_length_scale (percent) raises the
-		// game's very short cap so the shadow can stretch in the lamp direction.
+		// Set the shadow length from the light's DIRECTION but a tunable reach,
+		// decoupled from its raw horizontal magnitude. The overhead casters we now
+		// pick are steep (small horizontal), so keying length off that magnitude
+		// pinned the shadow under the feet. shadow_length_scale (percent) now sets
+		// how far the shadow stretches in the light's horizontal direction; the
+		// z = -1 vertical then fixes the cast angle (bigger reach = longer shadow).
 		int scalePercent = ConfMan.hasKey("shadow_length_scale")
-				? CLIP((int)ConfMan.getInt("shadow_length_scale"), 100, 2000) : 600;
-		float maxLen = StarkScene->getMaxShadowLength() * (scalePercent / 100.0f);
+				? CLIP((int)ConfMan.getInt("shadow_length_scale"), 100, 4000) : 600;
+		float reach = StarkScene->getMaxShadowLength() * (scalePercent / 100.0f);
 
 		Math::Vector2d h(dir.x(), dir.y());
-		float shadowLength = MIN(h.getMagnitude(), maxLen);
 		if (h.getMagnitude() > 0.0001f) {
 			h.normalize();
-			h *= shadowLength;
+			h *= reach;
 			dir.x() = h.getX();
 			dir.y() = h.getY();
 		} else {
