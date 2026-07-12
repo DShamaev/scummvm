@@ -1166,6 +1166,10 @@ void OpenGLSDriver::debugDrawShadowMap() {
 	_postShader->unbind();
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
+
+	// Restore the game viewport, otherwise the rest of the scene (the character's
+	// own main draw, other actors) would render into this corner rectangle.
+	setViewport(_unscaledViewport);
 }
 
 Graphics::Surface *OpenGLSDriver::getViewportScreenshot() const {
