@@ -63,6 +63,8 @@ uniform float sharpenStrength;
 // Screen-space contact ambient occlusion (depth-only, no normals)
 uniform float ssaoStrength;   // 0 = off
 uniform float ssaoRadius;     // sample radius in texels
+uniform sampler2D aoTex;      // pre-computed, denoised AO (high-quality path)
+uniform float hqSSAO;         // 1 = sample aoTex instead of computing inline
 
 // Filmic tonemap + bloom
 uniform float tonemapStrength; // 0 = off, 1 = full ACES filmic
@@ -107,8 +109,12 @@ void main() {
 	}
 
 	// Contact ambient occlusion, depth-only. Thresholds scale with distance so it
-	// works across scenes.
-	if (ssaoStrength > 0.0) {
+	// works across scenes. The high-quality path samples a pre-computed, denoised
+	// AO buffer; otherwise it is computed inline here.
+	if (ssaoStrength > 0.0 && hqSSAO > 0.5) {
+		ssaoDark = ssaoStrength * texture(aoTex, uv).r;
+		color *= 1.0 - ssaoDark;
+	} else if (ssaoStrength > 0.0) {
 		float cz = sceneDepth(uv);
 		float occ = 0.0;
 

@@ -112,7 +112,10 @@ OpenGLSDriver::OpenGLSDriver() :
 	_bloomTexA(0),
 	_bloomTexB(0),
 	_bloomW(0),
-	_bloomH(0) {
+	_bloomH(0),
+	_ssaoShader(nullptr),
+	_aoTexA(0),
+	_aoTexB(0) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
@@ -124,8 +127,11 @@ OpenGLSDriver::~OpenGLSDriver() {
 	if (_postDepthCopyTex) { glDeleteTextures(1, &_postDepthCopyTex); _postDepthCopyTex = 0; }
 	if (_bloomTexA) { glDeleteTextures(1, &_bloomTexA); _bloomTexA = 0; }
 	if (_bloomTexB) { glDeleteTextures(1, &_bloomTexB); _bloomTexB = 0; }
+	if (_aoTexA) { glDeleteTextures(1, &_aoTexA); _aoTexA = 0; }
+	if (_aoTexB) { glDeleteTextures(1, &_aoTexB); _aoTexB = 0; }
 	if (_bloomFbo) { glDeleteFramebuffers(1, &_bloomFbo); _bloomFbo = 0; }
 	delete _blurShader;
+	delete _ssaoShader;
 	delete _postShader;
 	delete _surfaceFillShader;
 	delete _surfaceDepthShader;
@@ -173,6 +179,11 @@ void OpenGLSDriver::init() {
 	_blurShader = OpenGL::Shader::fromFiles("stark_post_blur", postAttributes);
 	_blurShader->enableVertexAttribute("position", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
 	_blurShader->enableVertexAttribute("texcoord", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
+
+	// Dedicated SSAO shader: computes AO into its own buffer for denoise + strength.
+	_ssaoShader = OpenGL::Shader::fromFiles("stark_post_ssao", postAttributes);
+	_ssaoShader->enableVertexAttribute("position", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+	_ssaoShader->enableVertexAttribute("texcoord", _postVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
 
 	// Diagnostic: report the OpenGL context SDL/macOS actually handed us, so we
 	// can tell whether we are on the legacy 2.1 stack (GLSL 1.20) or a modern
@@ -270,42 +281,92 @@ void OpenGLSDriver::blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dir
 	_blurShader->unbind();
 }
 
-void OpenGLSDriver::buildBloom(int vw, int vh, float threshold) {
+void OpenGLSDriver::ensureHalfResTargets(int vw, int vh) {
 	int bw = MAX(vw / 2, 1);
 	int bh = MAX(vh / 2, 1);
-
 	if (!_bloomFbo) {
 		glGenFramebuffers(1, &_bloomFbo);
 	}
-	if (!_bloomTexA || _bloomW != bw || _bloomH != bh) {
-		if (_bloomTexA) glDeleteTextures(1, &_bloomTexA);
-		if (_bloomTexB) glDeleteTextures(1, &_bloomTexB);
-		GLuint tex[2] = { 0, 0 };
-		glGenTextures(2, tex);
-		_bloomTexA = tex[0];
-		_bloomTexB = tex[1];
-		for (int i = 0; i < 2; i++) {
-			glBindTexture(GL_TEXTURE_2D, tex[i]);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bw, bh, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		}
-		glBindTexture(GL_TEXTURE_2D, 0);
-		_bloomW = bw;
-		_bloomH = bh;
+	if (_bloomTexA && _bloomW == bw && _bloomH == bh) {
+		return;
 	}
+	GLuint *targets[4] = { &_bloomTexA, &_bloomTexB, &_aoTexA, &_aoTexB };
+	for (int i = 0; i < 4; i++) {
+		if (*targets[i]) glDeleteTextures(1, targets[i]);
+		glGenTextures(1, targets[i]);
+		glBindTexture(GL_TEXTURE_2D, *targets[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bw, bh, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
+	_bloomW = bw;
+	_bloomH = bh;
+}
+
+void OpenGLSDriver::buildBloom(int vw, int vh, float threshold) {
+	ensureHalfResTargets(vw, vh);
 
 	// Bright-pass the scene into A, then two separable Gaussian iterations
 	// (H into B, V into A) for a wide, smooth bloom. Half resolution.
 	blurPass(_magTex, _bloomTexA, 0.0f, 0.0f, 1.0f, threshold);
-	float dx = 1.0f / (float)bw;
-	float dy = 1.0f / (float)bh;
+	float dx = 1.0f / (float)_bloomW;
+	float dy = 1.0f / (float)_bloomH;
 	for (int i = 0; i < 2; i++) {
 		blurPass(_bloomTexA, _bloomTexB, dx, 0.0f, 0.0f, 0.0f);
 		blurPass(_bloomTexB, _bloomTexA, 0.0f, dy, 0.0f, 0.0f);
 	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void OpenGLSDriver::buildSSAO(int vw, int vh, float radius, float dynamicOnly) {
+	ensureHalfResTargets(vw, vh);
+
+	bool useGLDepth = ConfMan.getBool("enable_depth_copy") && _postDepthCopyTex != 0;
+
+	// Bind the depth source(s) the AO shader samples (unit 1 primary, unit 2 mask).
+	glActiveTexture(GL_TEXTURE1);
+	if (useGLDepth) {
+		glBindTexture(GL_TEXTURE_2D, _postDepthCopyTex);
+	} else if (_worldDepthBitmap) {
+		_worldDepthBitmap->bind();
+	}
+	if (dynamicOnly > 0.5f && _worldDepthBitmap) {
+		glActiveTexture(GL_TEXTURE2);
+		_worldDepthBitmap->bind();
+	}
+	glActiveTexture(GL_TEXTURE0);
+
+	// AO pass into _aoTexA. texelSize is FULL-res so the sample radius stays
+	// constant in screen space even though the buffer is half resolution.
+	glBindFramebuffer(GL_FRAMEBUFFER, _bloomFbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _aoTexA, 0);
+	glViewport(0, 0, _bloomW, _bloomH);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
+
+	_ssaoShader->use();
+	_ssaoShader->setUniform("depthTex", 1);
+	_ssaoShader->setUniform("bgDepthTex", 2);
+	_ssaoShader->setUniform("texelSize", Math::Vector2d(1.0f / vw, 1.0f / vh));
+	_ssaoShader->setUniform1f("ssaoRadius", radius);
+	_ssaoShader->setUniform1f("ssaoDynamicOnly", dynamicOnly);
+	_ssaoShader->setUniform1f("depthMode", useGLDepth ? 1.0f : 0.0f);
+	_ssaoShader->setUniform1f("depthNear", StarkScene->getNearClipPlane());
+	_ssaoShader->setUniform1f("depthFar", StarkScene->getFarClipPlane());
+	_ssaoShader->setUniform1f("depthZMin", _worldDepthZMin);
+	_ssaoShader->setUniform1f("depthZMax", _worldDepthZMax);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	_ssaoShader->unbind();
+
+	// Denoise: separable blur A -> B -> A.
+	float dx = 1.0f / (float)_bloomW;
+	float dy = 1.0f / (float)_bloomH;
+	blurPass(_aoTexA, _aoTexB, dx, 0.0f, 0.0f, 0.0f);
+	blurPass(_aoTexB, _aoTexA, 0.0f, dy, 0.0f, 0.0f);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
@@ -581,12 +642,24 @@ void OpenGLSDriver::applyPostProcess() {
 
 	// High-quality bloom: build a wide, smooth bloom in a half-res FBO from the
 	// copied scene, added in the final pass instead of the single-pass inline one.
-	bool hqBloom = grading && ConfMan.getBool("enable_hq_post")
-			&& StarkScene->getPostSetting("bloom_strength") > 0;
+	bool hqPost = ConfMan.getBool("enable_hq_post");
+	bool hqBloom = grading && hqPost && StarkScene->getPostSetting("bloom_strength") > 0;
 	if (hqBloom) {
 		buildBloom(vw, vh, CLIP(StarkScene->getPostSetting("bloom_threshold"), 0, 100) / 100.0f);
-		// buildBloom rebinds the default framebuffer but leaves a small viewport;
-		// restore the game-viewport region for the final composite.
+	}
+
+	// High-quality SSAO: compute AO into its own half-res buffer and denoise it,
+	// so it can be pushed stronger/wider without the inline version's speckle.
+	bool hqSSAO = grading && hqPost && ssao;
+	if (hqSSAO) {
+		bool dynamicMask = useGLDepth && _postDepthCopyTex && _worldDepthBitmap != nullptr;
+		buildSSAO(vw, vh, (float)CLIP(StarkScene->getPostSetting("ssao_radius"), 1, 64),
+		          dynamicMask ? 1.0f : 0.0f);
+	}
+
+	if (hqBloom || hqSSAO) {
+		// The FBO passes rebind the default framebuffer but leave a small
+		// viewport; restore the game-viewport region for the final composite.
 		setViewport(Common::Rect(0, Gfx::Driver::kTopBorderHeight,
 		                         Gfx::Driver::kOriginalWidth,
 		                         Gfx::Driver::kTopBorderHeight + Gfx::Driver::kGameViewportHeight));
@@ -657,9 +730,21 @@ void OpenGLSDriver::applyPostProcess() {
 	if (ssao) {
 		_postShader->setUniform1f("ssaoStrength", ssaoEff / 100.0f);
 		_postShader->setUniform1f("ssaoRadius", (float)CLIP(StarkScene->getPostSetting("ssao_radius"), 1, 64));
+		// High-quality AO: sample the pre-computed, denoised AO buffer on unit 4
+		// instead of computing it inline.
+		if (hqSSAO) {
+			glActiveTexture(GL_TEXTURE4);
+			glBindTexture(GL_TEXTURE_2D, _aoTexA);
+			glActiveTexture(GL_TEXTURE0);
+			_postShader->setUniform("aoTex", 4);
+			_postShader->setUniform1f("hqSSAO", 1.0f);
+		} else {
+			_postShader->setUniform1f("hqSSAO", 0.0f);
+		}
 	} else {
 		_postShader->setUniform1f("ssaoStrength", 0.0f);
 		_postShader->setUniform1f("ssaoRadius", 1.0f);
+		_postShader->setUniform1f("hqSSAO", 0.0f);
 	}
 
 	// Depth of field: blur by distance from the character's focus plane.

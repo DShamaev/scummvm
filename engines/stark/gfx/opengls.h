@@ -161,17 +161,27 @@ private:
 	// an FBO (now that FBOs work on this stack), for a wide, smooth bloom instead
 	// of the single-pass inline version.
 	OpenGL::Shader *_blurShader;
-	GLuint _bloomFbo;
+	GLuint _bloomFbo;       // shared half-res FBO for the bloom and AO passes
 	GLuint _bloomTexA;
 	GLuint _bloomTexB;
 	int _bloomW;
 	int _bloomH;
+
+	// High-quality SSAO: compute AO into its own half-res buffer and blur it
+	// (denoise), so it can be pushed stronger/wider without speckle.
+	OpenGL::Shader *_ssaoShader;
+	GLuint _aoTexA;
+	GLuint _aoTexB;
 
 	// Render one fullscreen pass with _blurShader from srcTex into dstTex (bound
 	// to _bloomFbo), at the current _bloomW x _bloomH. mode 1 = bright-pass.
 	void blurPass(GLuint srcTex, GLuint dstTex, float dirX, float dirY, float mode, float threshold);
 	// Build the bloom texture (_bloomTexA) from the copied scene (_magTex).
 	void buildBloom(int vw, int vh, float threshold);
+	// Build the denoised AO texture (_aoTexA). Depth must already be bound/decided.
+	void buildSSAO(int vw, int vh, float radius, float dynamicOnly);
+	// Ensure the half-res ping-pong textures exist at vw/2 x vh/2.
+	void ensureHalfResTargets(int vw, int vh);
 
 	void ensurePostResources(int width, int height);
 	void freePostResources();

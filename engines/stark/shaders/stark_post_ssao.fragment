@@ -1,0 +1,83 @@
+in vec2 Texcoord;
+
+OUTPUT
+
+// Depth sources (same layout as the main post shader).
+uniform sampler2D depthTex;
+uniform sampler2D bgDepthTex;
+uniform vec2 texelSize;      // 1.0 / full scene resolution (screen-space radius)
+uniform float ssaoRadius;
+uniform float ssaoDynamicOnly;
+uniform float depthZMin;
+uniform float depthZMax;
+uniform float depthNear;
+uniform float depthFar;
+uniform float depthMode;     // 0 = packed mask, 1 = GL window depth
+
+float sceneDepth(vec2 uv) {
+	if (depthMode > 0.5) {
+		float w = texture(depthTex, uv).r;
+		float ndc = w * 2.0 - 1.0;
+		return (2.0 * depthNear * depthFar) / (depthFar + depthNear - ndc * (depthFar - depthNear));
+	}
+	vec4 d = texture(depthTex, uv);
+	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
+	return mix(depthZMin, depthZMax, norm);
+}
+
+float bgDepth(vec2 uv) {
+	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y));
+	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
+	return mix(depthZMin, depthZMax, norm);
+}
+
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// Outputs the contact-AO occlusion (0 = none, 1 = full) to be blurred and then
+// applied by the composite pass. Same logic as the inline SSAO, but written to
+// its own buffer so it can be denoised and pushed harder.
+void main() {
+	vec2 uv = Texcoord;
+	float cz = sceneDepth(uv);
+	float occ = 0.0;
+
+	if (ssaoDynamicOnly > 0.5) {
+		float cbg = bgDepth(uv);
+		float centerDyn = smoothstep(0.03, 0.10, (cbg - cz) / max(cbg, 1.0));
+		if (centerDyn < 0.5) {
+			for (int i = 0; i < 16; i++) {
+				float ang = (float(i) / 16.0) * 6.2831853 + hash(uv * 1.7) * 6.2831853;
+				float rad = (i < 8) ? 0.5 : 1.0;
+				vec2 suv = uv + vec2(cos(ang), sin(ang)) * rad * ssaoRadius * texelSize;
+				float sz = sceneDepth(suv);
+				float sbg = bgDepth(suv);
+				float sampleDyn = smoothstep(0.03, 0.10, (sbg - sz) / max(sbg, 1.0));
+				float diff = cbg - sz;
+				if (diff > cbg * 0.003) {
+					float contact = 1.0 - smoothstep(cbg * 0.03, cbg * 0.18, diff);
+					occ += sampleDyn * contact;
+				}
+			}
+			occ /= 16.0;
+			occ = pow(occ, 0.5);
+		}
+	} else {
+		for (int i = 0; i < 16; i++) {
+			float ang = (float(i) / 16.0) * 6.2831853 + hash(uv * 1.7) * 6.2831853;
+			float rad = (i < 8) ? 0.5 : 1.0;
+			vec2 suv = uv + vec2(cos(ang), sin(ang)) * rad * ssaoRadius * texelSize;
+			float sz = sceneDepth(suv);
+			float diff = cz - sz;
+			if (diff > cz * 0.01) {
+				float range = cz * 0.5;
+				occ += clamp(1.0 - (diff - range) / range, 0.0, 1.0);
+			}
+		}
+		occ /= 16.0;
+		occ = pow(occ, 0.75);
+	}
+
+	outColor = vec4(occ, occ, occ, 1.0);
+}
