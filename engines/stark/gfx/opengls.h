@@ -134,6 +134,7 @@ private:
 	bool _postActive;
 	int _renderScale;   // supersample factor for the in-game FBO (1 = off)
 	GLint _sceneFbo;    // the engine framebuffer to resolve the supersampled frame back into
+	bool _frameSupersampled;  // this frame was rendered into _postFBO at _renderScale x
 
 	// Copy-path post-processing + detail magnifier. Instead of rendering the
 	// scene into an FBO (which hangs on Apple's GL-over-Metal stack), the frame

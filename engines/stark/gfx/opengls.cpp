@@ -92,6 +92,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_postActive(false),
 	_renderScale(1),
 	_sceneFbo(0),
+	_frameSupersampled(false),
 	_magTex(0),
 	_magWidth(0),
 	_magHeight(0),
@@ -553,6 +554,7 @@ bool OpenGLSDriver::beginPostProcess() {
 	// the engine's framebuffer. FBO scene rendering works on this stack (the old
 	// "hang" was the pause-key confound); the composite/effects still run after,
 	// in applyPostProcess. 'supersample' == 100 disables this entirely.
+	_frameSupersampled = false;
 	int ss = ConfMan.hasKey("supersample") ? ConfMan.getInt("supersample") : 100;
 	_renderScale = (CLIP(ss, 100, 200) >= 150) ? 2 : 1;
 	if (_renderScale < 2) {
@@ -575,6 +577,7 @@ bool OpenGLSDriver::beginPostProcess() {
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 	_postActive = true;   // makes setViewport scale rendering by _renderScale
+	_frameSupersampled = true;
 	return true;
 }
 
@@ -700,7 +703,20 @@ void OpenGLSDriver::applyPostProcess() {
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		}
 		glBindTexture(GL_TEXTURE_2D, _postDepthCopyTex);
-		glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, vp.left, glY, vw, vh, 0);
+		if (_frameSupersampled && _postFBO) {
+			// When supersampling, the resolve copies only COLOUR into the engine
+			// framebuffer, so its depth is stale. The real scene depth is in
+			// _postFBO's depth buffer at _renderScale x - read from there, at the
+			// game region's supersampled coordinates. Linearised depth is
+			// resolution-independent, so SSAO/DoF sample it fine at normalised UV.
+			int rs = _renderScale;
+			glBindFramebuffer(GL_FRAMEBUFFER, _postFBO);
+			glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+			                 vp.left * rs, glY * rs, vw * rs, vh * rs, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
+		} else {
+			glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, vp.left, glY, vw, vh, 0);
+		}
 	}
 
 	// High-quality bloom: build a wide, smooth bloom in a half-res FBO from the
