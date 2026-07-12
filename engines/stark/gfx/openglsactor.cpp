@@ -507,6 +507,8 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	_shadowRecvShader->setUniform1f("shadowAlpha", alpha);
 	float bias = CLIP(ConfMan.hasKey("shadow_map_bias") ? (int)ConfMan.getInt("shadow_map_bias") : 20, 0, 2000) / 100000.0f;
 	_shadowRecvShader->setUniform1f("shadowBias", bias);
+	float softness = CLIP(ConfMan.hasKey("shadow_map_softness") ? (int)ConfMan.getInt("shadow_map_softness") : 3, 1, 40);
+	_shadowRecvShader->setUniform1f("shadowSoftness", softness);
 	_shadowRecvShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
 
 	glActiveTexture(GL_TEXTURE0);
