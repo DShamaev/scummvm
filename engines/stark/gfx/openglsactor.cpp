@@ -145,6 +145,8 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	_shader->setUniform("normalTex", 1);
 	_shader->setUniform("aoTex", 2);
 	_shader->setUniform("debugShowNormals", ConfMan.getBool("debug_show_normals") ? 1 : 0);
+	_shader->setUniform1f("enhancedLight",
+			ConfMan.hasKey("enhanced_actor_light") && !ConfMan.getBool("enhanced_actor_light") ? 0.0f : 1.0f);
 
 	// Atmospheric fog: only where the location has a depth-mapped background
 	// (exteriors), using its depth range and horizon color

@@ -47,6 +47,12 @@ uniform float specularStrength;
 uniform float specularShininess;
 uniform float rimStrength;
 
+// Master toggle for the enhanced per-pixel additions (specular, rim, normal
+// mapping). 0 = plain per-pixel diffuse, so the base look can be A/B'd. These
+// additions react sharply to the animating surface normal, so disabling them
+// removes them as a suspect for shading pulsation during animation.
+uniform float enhancedLight;
+
 // Tangent-free normal mapping (Christian Schueler's method): reconstruct
 // the tangent frame from screen-space derivatives, so no per-vertex
 // tangents are needed - which the 1999 meshes don't have.
@@ -74,7 +80,7 @@ void main() {
 	}
 
 	vec3 N = normalize(EyeNormal);
-	if (UBOOL_TEST(hasNormalMap)) {
+	if (UBOOL_TEST(hasNormalMap) && enhancedLight > 0.5) {
 		N = perturbNormal(N, EyePosition, Texcoord);
 	}
 
@@ -133,13 +139,13 @@ void main() {
 			// Masking by incidence makes highlights fade in smoothly as
 			// surfaces turn towards the light, instead of popping at
 			// grazing angles while the character animates
-			specularAcc += lightColor * highlight * specularStrength * incidence;
+			specularAcc += lightColor * highlight * specularStrength * incidence * enhancedLight;
 		}
 	}
 
 	// Soft rim so the character reads against dark backgrounds (also occluded)
 	float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-	diffuseAcc += ambientColor * rim * rimStrength * ao;
+	diffuseAcc += ambientColor * rim * rimStrength * ao * enhancedLight;
 
 	vec3 lit = base.rgb * clamp(diffuseAcc, 0.0, 1.0) + specularAcc;
 	// A gentle share of the occlusion also darkens direct light, so creases

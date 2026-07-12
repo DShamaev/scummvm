@@ -123,6 +123,9 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// character goes darker in dark rooms (less "spotlit"); higher = more
 	// readable but can look lit independently of a dark scene.
 	ConfMan.registerDefault("character_min_light", 40);
+	// Master switch for the enhanced per-pixel actor additions (specular, rim,
+	// normal mapping). Off falls back to plain per-pixel diffuse.
+	ConfMan.registerDefault("enhanced_actor_light", true);
 	ConfMan.registerDefault("marker_scale", 100);          // percent
 	ConfMan.registerDefault("marker_colorblind", false);
 	ConfMan.registerDefault("subtitle_scale", 100);        // percent
