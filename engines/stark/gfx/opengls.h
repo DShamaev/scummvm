@@ -182,6 +182,13 @@ private:
 	int _dofW;
 	int _dofH;
 
+	// The framebuffer the engine is actually rendering into at the start of the
+	// post pass. ScummVM's OpenGL backend renders the game into its OWN FBO, not
+	// the window default (0), so all the post/FBO passes must restore to THIS,
+	// never a hardcoded 0 - otherwise the composite lands on the wrong target and
+	// is discarded (every post effect + debug view silently does nothing).
+	GLint _postDrawFbo;
+
 	// Render one fullscreen pass with _blurShader from srcTex into dstTex (bound
 	// to _bloomFbo), at w x h. mode 1 = bright-pass.
 	void blurPass(GLuint srcTex, GLuint dstTex, int w, int h, float dirX, float dirY, float mode, float threshold);

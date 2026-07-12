@@ -119,7 +119,8 @@ OpenGLSDriver::OpenGLSDriver() :
 	_dofTexA(0),
 	_dofTexB(0),
 	_dofW(0),
-	_dofH(0) {
+	_dofH(0),
+	_postDrawFbo(0) {
 }
 
 OpenGLSDriver::~OpenGLSDriver() {
@@ -325,7 +326,7 @@ void OpenGLSDriver::buildBloom(int vw, int vh, float threshold) {
 		blurPass(_bloomTexB, _bloomTexA, _bloomW, _bloomH, 0.0f, dy, 0.0f, 0.0f);
 	}
 
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
 }
 
 void OpenGLSDriver::buildSSAO(int vw, int vh, float radius, float dynamicOnly) {
@@ -374,7 +375,7 @@ void OpenGLSDriver::buildSSAO(int vw, int vh, float radius, float dynamicOnly) {
 	blurPass(_aoTexA, _aoTexB, _bloomW, _bloomH, dx, 0.0f, 0.0f, 0.0f);
 	blurPass(_aoTexB, _aoTexA, _bloomW, _bloomH, 0.0f, dy, 0.0f, 0.0f);
 
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
 }
 
 void OpenGLSDriver::buildDoF(int vw, int vh, int iterations) {
@@ -417,7 +418,7 @@ void OpenGLSDriver::buildDoF(int vw, int vh, int iterations) {
 		blurPass(_dofTexB, _dofTexA, dw, dh, 0.0f, dy, 0.0f, 0.0f);
 	}
 
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
 }
 
 void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax) {
@@ -613,6 +614,11 @@ void OpenGLSDriver::endPostProcess() {
 }
 
 void OpenGLSDriver::applyPostProcess() {
+	// Remember the framebuffer the engine is rendering into (ScummVM's OpenGL
+	// backend uses its own FBO, not the window default 0). Every FBO/post pass
+	// below must restore to THIS, never a hardcoded 0.
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &_postDrawFbo);
+
 	int magnifyPercent = ConfMan.hasKey("magnify") ? ConfMan.getInt("magnify") : 100;
 	bool magnifying = magnifyPercent > 100;
 	bool grading    = ConfMan.getBool("enable_post_processing");
@@ -722,9 +728,9 @@ void OpenGLSDriver::applyPostProcess() {
 	// offscreen buffer and never reaches the screen: the frame then shows the raw
 	// pre-post scene "behind" it (symptom: post/debug appears to do nothing with
 	// enable_hq_post on, while the non-FBO path works). Unconditionally force the
-	// default framebuffer and the full game viewport right before compositing so
+	// engine's framebuffer and the full game viewport right before compositing so
 	// this can never happen, regardless of which passes ran.
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
 	setViewport(Common::Rect(0, Gfx::Driver::kTopBorderHeight,
 	                         Gfx::Driver::kOriginalWidth,
 	                         Gfx::Driver::kTopBorderHeight + Gfx::Driver::kGameViewportHeight));
@@ -916,9 +922,9 @@ void OpenGLSDriver::applyPostProcess() {
 		GLenum err = glGetError();
 		warning("Stark post: grading=%d hqPost=%d | hqBloom=%d hqSSAO=%d hqDof=%d dofBuf=%d "
 		        "| ssaoEff=%d dof=%d haveDepth=%d worldMask=%d glDepthCopy=%d "
-		        "| debugView=%d vw=%d vh=%d boundFBO=%d scissorEnabled=%d scissor=[%d,%d,%d,%d] glErr=0x%04x",
+		        "| debugView=%d vw=%d vh=%d engineFBO=%d boundFBO=%d scissorEnabled=%d scissor=[%d,%d,%d,%d] glErr=0x%04x",
 		        grading, hqPost, hqBloom, hqSSAO, hqDof, dofBuf, ssaoEff, dof, haveDepth,
-		        _worldDepthBitmap != nullptr, useGLDepth, debugView, vw, vh, boundFbo,
+		        _worldDepthBitmap != nullptr, useGLDepth, debugView, vw, vh, _postDrawFbo, boundFbo,
 		        (int)scissorWas, scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3], (uint)err);
 		ConfMan.setInt("post_debug_log", 0);
 	}
