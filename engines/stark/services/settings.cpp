@@ -126,6 +126,9 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// Master switch for the enhanced per-pixel actor additions (specular, rim,
 	// normal mapping). Off falls back to plain per-pixel diffuse.
 	ConfMan.registerDefault("enhanced_actor_light", true);
+	// Global specular intensity dial (percent, 100 = tuned defaults). Lower to
+	// tame highlight twinkle on animating low-poly meshes; 0 = no specular.
+	ConfMan.registerDefault("specular_scale", 100);
 	ConfMan.registerDefault("marker_scale", 100);          // percent
 	ConfMan.registerDefault("marker_colorblind", false);
 	ConfMan.registerDefault("subtitle_scale", 100);        // percent
