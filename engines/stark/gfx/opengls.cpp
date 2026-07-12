@@ -729,6 +729,17 @@ void OpenGLSDriver::applyPostProcess() {
 	                         Gfx::Driver::kOriginalWidth,
 	                         Gfx::Driver::kTopBorderHeight + Gfx::Driver::kGameViewportHeight));
 
+	// The UI/engine may leave the scissor test enabled with a rect that does not
+	// cover the game region; that would silently clip the composite quad away
+	// (no GL error, nothing drawn - the frame shows the raw pre-post scene, so
+	// grade/DoF/debug views all appear to do nothing). Disable it for the draw
+	// and restore it afterwards. The viewport already restricts us to the game
+	// region, so no scissor is needed here.
+	GLint scissorBox[4] = { 0, 0, 0, 0 };
+	glGetIntegerv(GL_SCISSOR_BOX, scissorBox);
+	GLboolean scissorWas = glIsEnabled(GL_SCISSOR_TEST);
+	glDisable(GL_SCISSOR_TEST);
+
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 	glDisable(GL_BLEND);
@@ -892,6 +903,10 @@ void OpenGLSDriver::applyPostProcess() {
 	glBindTexture(GL_TEXTURE_2D, 0);
 	_postShader->unbind();
 
+	if (scissorWas) {
+		glEnable(GL_SCISSOR_TEST);
+	}
+
 	// One-shot diagnostic (setInt post_debug_log 1): report the real state of this
 	// post pass to the log, so we can see - rather than guess - which passes ran,
 	// whether depth is present, where the composite drew, and any GL error.
@@ -901,9 +916,10 @@ void OpenGLSDriver::applyPostProcess() {
 		GLenum err = glGetError();
 		warning("Stark post: grading=%d hqPost=%d | hqBloom=%d hqSSAO=%d hqDof=%d dofBuf=%d "
 		        "| ssaoEff=%d dof=%d haveDepth=%d worldMask=%d glDepthCopy=%d "
-		        "| debugView=%d vw=%d vh=%d boundFBO=%d glErr=0x%04x",
+		        "| debugView=%d vw=%d vh=%d boundFBO=%d scissorEnabled=%d scissor=[%d,%d,%d,%d] glErr=0x%04x",
 		        grading, hqPost, hqBloom, hqSSAO, hqDof, dofBuf, ssaoEff, dof, haveDepth,
-		        _worldDepthBitmap != nullptr, useGLDepth, debugView, vw, vh, boundFbo, (uint)err);
+		        _worldDepthBitmap != nullptr, useGLDepth, debugView, vw, vh, boundFbo,
+		        (int)scissorWas, scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3], (uint)err);
 		ConfMan.setInt("post_debug_log", 0);
 	}
 
