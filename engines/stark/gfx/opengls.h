@@ -122,7 +122,7 @@ public:
 	 * it for SSAO / depth-of-field - avoiding a GL depth-buffer copy, which
 	 * hangs on Apple's GL-over-Metal stack.
 	 */
-	void setWorldDepth(const Bitmap *depth, float zMin, float zMax);
+	void setWorldDepth(const Bitmap *depth, float zMin, float zMax, int area);
 
 	void getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const override;
 
@@ -190,6 +190,7 @@ private:
 	const Bitmap *_worldDepthBitmap;
 	float _worldDepthZMin;
 	float _worldDepthZMax;
+	int _worldDepthArea;   // on-screen area of the registered depth surface (keep the largest = the background)
 	// Optional GL depth-buffer copy (real depth, includes the character), used
 	// when 'enable_depth_copy' is on and the stack accepts it.
 	GLuint _postDepthCopyTex;

@@ -99,6 +99,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_worldDepthBitmap(nullptr),
 	_worldDepthZMin(0.0f),
 	_worldDepthZMax(0.0f),
+	_worldDepthArea(0),
 	_postDepthCopyTex(0),
 	_postDbgGLDepth(false),
 	_postDbgWorldMask(false),
@@ -262,6 +263,7 @@ void OpenGLSDriver::clearScreen() {
 	// The depth mask is re-registered when this frame's background renders; clear
 	// it so a location without a depth map doesn't reuse the previous one.
 	_worldDepthBitmap = nullptr;
+	_worldDepthArea = 0;
 
 	// Publish the previous frame's sprite-stamp diagnostics, then reset for this
 	// frame's stamp pass (which runs later, during the game window render).
@@ -444,7 +446,16 @@ void OpenGLSDriver::buildDoF(int vw, int vh, int iterations) {
 	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
 }
 
-void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax) {
+void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, int area) {
+	// Several surfaces per frame have depth maps (the full-screen location
+	// background AND small overlay props). The post pass wants the BACKGROUND's
+	// depth, so keep the largest-area surface, not the last one drawn - otherwise
+	// a prop's small depth map overwrites the background's and SSAO/DoF/the shadow
+	// drape sample the wrong depth as the character moves between props.
+	if (area < _worldDepthArea) {
+		return;
+	}
+	_worldDepthArea = area;
 	_worldDepthBitmap = depth;
 	_worldDepthZMin = zMin;
 	_worldDepthZMax = zMax;

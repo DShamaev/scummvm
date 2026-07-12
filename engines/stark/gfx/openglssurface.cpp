@@ -103,8 +103,10 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		StarkScene->setBackgroundDepthRange(_depthZMin, _depthZMax);
 
 		// Hand the depth mask to the post pass so SSAO / DoF can sample it
-		// (a normal texture) instead of copying the GL depth buffer.
-		_gfx->setWorldDepth(_depthBitmap, _depthZMin, _depthZMax);
+		// (a normal texture) instead of copying the GL depth buffer. Pass the
+		// on-screen area so the driver keeps the largest (full-screen background)
+		// rather than a small overlay prop's depth map.
+		_gfx->setWorldDepth(_depthBitmap, _depthZMin, _depthZMax, (int)width * (int)height);
 
 		glActiveTexture(GL_TEXTURE1);
 		_depthBitmap->bind();
