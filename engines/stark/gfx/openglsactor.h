@@ -80,6 +80,11 @@ protected:
 
 	Math::Vector3d computeShadowLightDirection(const LightEntryArray &lights, const Math::Vector3d &actorPosition);
 
+	// Temporally-smoothed shadow direction, so it can't snap/flip when the summed
+	// light direction reverses (crossing between opposing lamps) or jitters.
+	Math::Vector3d _smoothedShadowDir;
+	bool _shadowDirInit;
+
 	bool getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
 			Math::Vector3d &direction, float weight = 1.0f);
 	bool getDirectionalLightContribution(LightEntry *light, Math::Vector3d &direction);

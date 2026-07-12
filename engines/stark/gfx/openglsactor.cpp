@@ -85,6 +85,7 @@ OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 	_shadowMapShader = _gfx->createShadowMapShaderInstance();
 	_shadowRecvShader = _gfx->createShadowRecvShaderInstance();
 	_shadowRecvVBO = 0;
+	_shadowDirInit = false;
 }
 
 OpenGLSActorRenderer::~OpenGLSActorRenderer() {
@@ -720,11 +721,17 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 		Math::Vector2d horizontalProjection(sumDirection.x(), sumDirection.y());
 		float shadowLength = MIN(horizontalProjection.getMagnitude(), maxLen);
 
-		horizontalProjection.normalize();
-		horizontalProjection *= shadowLength;
-
-		sumDirection.x() = horizontalProjection.getX();
-		sumDirection.y() = horizontalProjection.getY();
+		// Guard against normalizing a near-zero horizontal sum (lights overhead or
+		// cancelling), which amplifies noise into a flipping direction.
+		if (horizontalProjection.getMagnitude() > 0.0001f) {
+			horizontalProjection.normalize();
+			horizontalProjection *= shadowLength;
+			sumDirection.x() = horizontalProjection.getX();
+			sumDirection.y() = horizontalProjection.getY();
+		} else {
+			sumDirection.x() = 0;
+			sumDirection.y() = 0;
+		}
 		sumDirection.z() = -1;
 	} else {
 		// Cast from above by default
@@ -733,7 +740,21 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 		sumDirection.z() = -1;
 	}
 
-	return sumDirection;
+	// Temporal smoothing: ease the horizontal direction between frames so it can
+	// never snap/flip. When April crosses between opposing lamps the target x/y
+	// reverses; smoothing swings the shadow through "overhead" instead of jumping
+	// to the far side. shadow_dir_smooth (percent) sets the responsiveness.
+	if (!_shadowDirInit) {
+		_smoothedShadowDir = sumDirection;
+		_shadowDirInit = true;
+	} else {
+		float s = CLIP(ConfMan.hasKey("shadow_dir_smooth")
+				? (int)ConfMan.getInt("shadow_dir_smooth") : 8, 1, 100) / 100.0f;
+		_smoothedShadowDir.x() = _smoothedShadowDir.x() * (1.0f - s) + sumDirection.x() * s;
+		_smoothedShadowDir.y() = _smoothedShadowDir.y() * (1.0f - s) + sumDirection.y() * s;
+		_smoothedShadowDir.z() = -1.0f;
+	}
+	return _smoothedShadowDir;
 }
 
 bool OpenGLSActorRenderer::getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
