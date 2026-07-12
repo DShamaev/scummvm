@@ -83,6 +83,7 @@ Console::Console() :
 	registerCmd("setBool",              WRAP_METHOD(Console, Cmd_SetBool));
 	registerCmd("postInfo",             WRAP_METHOD(Console, Cmd_PostInfo));
 	registerCmd("renderEntries",        WRAP_METHOD(Console, Cmd_RenderEntries));
+	registerCmd("testFBO",              WRAP_METHOD(Console, Cmd_TestFBO));
 	registerCmd("postPreset",           WRAP_METHOD(Console, Cmd_PostPreset));
 	registerCmd("dumpModels",           WRAP_METHOD(Console, Cmd_DumpModels));
 	registerCmd("dumpModelsOriginal",   WRAP_METHOD(Console, Cmd_DumpModelsOriginal));
@@ -815,6 +816,14 @@ bool Console::Cmd_PostInfo(int argc, const char **argv) {
 	int ssaoMaster = ConfMan.getInt("ssao_master");
 	debugPrintf("SSAO: base %d x master %d%% = %d effective\n",
 			ssaoBase, ssaoMaster, CLIP(ssaoBase * CLIP(ssaoMaster, 0, 300) / 100, 0, 100));
+	return true;
+}
+
+bool Console::Cmd_TestFBO(int argc, const char **argv) {
+	debugPrintf("Testing offscreen framebuffer rendering...\n");
+	debugPrintf("(if the game freezes here, the FBO path still hangs on this stack)\n");
+	Common::String result = StarkGfx->testFramebuffer();
+	debugPrintf("%s\n", result.c_str());
 	return true;
 }
 

@@ -90,6 +90,8 @@ public:
 
 	void getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const override;
 
+	Common::String testFramebuffer() override;
+
 	/** Record a sprite depth-stamp (eye-space) this frame, for diagnostics. */
 	void recordSpriteStamp(float eyeDepth);
 	/** Report last frame's stamp count and eye-depth range (postInfo). */

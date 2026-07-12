@@ -246,6 +246,60 @@ void OpenGLSDriver::getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &
 	contactMode = _postDbgContact;
 }
 
+Common::String OpenGLSDriver::testFramebuffer() {
+	// 1) Create an FBO with a colour texture attachment.
+	GLuint fbo = 0, tex = 0;
+	glGenFramebuffers(1, &fbo);
+	glGenTextures(1, &tex);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+
+	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	Common::String result;
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		result = Common::String::format("FBO INCOMPLETE (status 0x%04x) - cannot use FBOs", (uint)status);
+	} else {
+		// 2) Render into it: a clear, then the textured post quad (the operation
+		//    that historically hung). readback forces the GPU to actually finish.
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_BLEND);
+		glViewport(0, 0, 64, 64);
+		glClearColor(0.25f, 0.5f, 0.75f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		bool drewQuad = false;
+		if (_postShader && _magTex) {
+			_postShader->use();
+			_postShader->setUniform("sceneTex", 0);
+			_postShader->setUniform1f("magnify", 1.0f);
+			_postShader->setUniform1f("debugView", 0.0f);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, _magTex);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			_postShader->unbind();
+			drewQuad = true;
+		}
+
+		unsigned char px[4] = { 0, 0, 0, 0 };
+		glReadPixels(1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+		GLenum err = glGetError();
+		result = Common::String::format(
+				"FBO OK - render+readback returned (%d,%d,%d,%d)%s glError=0x%04x. "
+				"If you can read this, the FBO path did NOT hang.",
+				px[0], px[1], px[2], px[3], drewQuad ? " [drew post quad]" : " [clear only]", (uint)err);
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glDeleteFramebuffers(1, &fbo);
+	glDeleteTextures(1, &tex);
+	return result;
+}
+
 void OpenGLSDriver::flipBuffer() {
 	g_system->updateScreen();
 }

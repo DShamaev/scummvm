@@ -140,6 +140,14 @@ public:
 		minEye = maxEye = 0.0f;
 	}
 
+	/**
+	 * Diagnostic: render into an offscreen framebuffer and read it back, to test
+	 * whether the FBO path works on this GL stack (it historically hung on Apple's
+	 * GL-over-Metal). Returns a human-readable result; if the stack is bad this
+	 * call itself may hang, which is the answer.
+	 */
+	virtual Common::String testFramebuffer() { return "FBO test not supported by this backend"; }
+
 	/** Checks if a screenpoint coord is within window bounds */
 	bool isPosInScreenBounds(const Common::Point &point) const;
 
