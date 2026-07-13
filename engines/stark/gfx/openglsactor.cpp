@@ -490,6 +490,12 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 		return false;
 	}
 
+	// Prefer reconstructing from the real depth buffer (includes depth-stamped
+	// props) so shadows land on furniture correctly; fall back to the background
+	// mask if this GL stack rejects the depth copy. Captured now, while the engine
+	// framebuffer is bound and the viewport is the game region.
+	GLuint sceneDepthTex = _gfx->captureViewportDepth();
+
 	// Fullscreen NDC quad + UV.
 	if (!_shadowBgVBO) {
 		static const float quad[16] = {
@@ -510,6 +516,11 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	Math::Matrix4 invView = StarkScene->getViewMatrix();
 	invView.inverse();
 	invView.transpose();
+
+	// Inverse projection (clip -> eye) for the real-depth reconstruction path.
+	Math::Matrix4 invProj = StarkScene->getProjectionMatrix();
+	invProj.inverse();
+	invProj.transpose();
 
 	Math::Matrix4 lightVP = _gfx->getShadowLightViewProj();
 	lightVP.transpose();
@@ -550,13 +561,26 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform("actorWorld", position);
 	float reach = CLIP(ConfMan.hasKey("shadow_length_scale") ? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
 	_shadowBgShader->setUniform1f("shadowReach", 150.0f * reach);
+	// Real-depth reconstruction (props included) when the depth copy succeeded.
+	_shadowBgShader->setUniform("sceneDepthTex", 2);
+	_shadowBgShader->setUniform("invProj", invProj);
+	_shadowBgShader->setUniform1f("useRealDepth", sceneDepthTex != 0 ? 1.0f : 0.0f);
 
+	if (sceneDepthTex != 0) {
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, sceneDepthTex);
+	}
 	glActiveTexture(GL_TEXTURE1);
 	_gfx->bindWorldDepth();
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture());
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindTexture(GL_TEXTURE_2D, 0);
+	if (sceneDepthTex != 0) {
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0);
+	}
 	_shadowBgShader->unbind();
 
 	glDepthMask(GL_TRUE);

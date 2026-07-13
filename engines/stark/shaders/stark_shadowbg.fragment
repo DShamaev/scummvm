@@ -12,6 +12,14 @@ uniform vec2 projScale;   // (proj[0][0], proj[1][1]) - eye-space x/y reconstruc
 uniform mat4 invView;     // eye space -> world space
 uniform mat4 lightVP;     // world -> light clip space
 
+// Real GL depth path: when useRealDepth > 0.5, reconstruct each pixel from the
+// actual depth buffer (which includes depth-stamped props and furniture) via the
+// inverse projection, instead of the background-only mask - so the shadow lands on
+// props at their true position rather than the wall behind them.
+uniform sampler2D sceneDepthTex;
+uniform mat4 invProj;     // clip space -> eye space
+uniform float useRealDepth;
+
 uniform sampler2D shadowTex;  // depth-in-colour shadow map
 uniform float shadowAlpha;
 uniform float shadowBias;
@@ -32,17 +40,24 @@ float occluderDepth(vec2 uv) {
 }
 
 void main() {
-	float norm = decodeMask(vUV);
-	float eyeZ = mix(zMin, zMax, norm);      // eye-space distance (positive)
-
-	// Reconstruct the eye-space position of the background at this pixel. The
-	// camera looks down -z, so a point at distance eyeZ has eye z = -eyeZ, and
-	// its x/y come from the screen NDC scaled by the projection.
 	vec2 ndc = vUV * 2.0 - 1.0;
+	float norm = decodeMask(vUV);            // kept for the mask fallback + debug 1
+
 	vec3 eyePos;
-	eyePos.z = -eyeZ;
-	eyePos.x = ndc.x * eyeZ / projScale.x;
-	eyePos.y = ndc.y * eyeZ / projScale.y;
+	if (useRealDepth > 0.5) {
+		// Reconstruct from the real depth buffer: NDC.xy from the screen, NDC.z
+		// from the sampled window depth, un-projected to eye space. Includes props.
+		float d = texture(sceneDepthTex, vUV).r;
+		vec4 clip = vec4(ndc, d * 2.0 - 1.0, 1.0);
+		vec4 eh = invProj * clip;
+		eyePos = eh.xyz / eh.w;
+	} else {
+		// Background-mask path: eye z from the calibrated mask, x/y from NDC.
+		float eyeZ = mix(zMin, zMax, norm);
+		eyePos.z = -eyeZ;
+		eyePos.x = ndc.x * eyeZ / projScale.x;
+		eyePos.y = ndc.y * eyeZ / projScale.y;
+	}
 
 	vec4 world = invView * vec4(eyePos, 1.0);
 	vec4 lc = lightVP * world;

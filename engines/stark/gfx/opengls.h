@@ -87,6 +87,12 @@ public:
 	 *  screen-space shadow that drapes onto walls/furniture. bind() binds it. */
 	bool hasWorldDepth() const { return _worldDepthBitmap != nullptr; }
 	void bindWorldDepth() const;
+	/** Copy the CURRENT viewport's GL depth buffer (which includes depth-stamped
+	 *  props and the character) into a texture and return it, so the wall drape can
+	 *  reconstruct real scene geometry instead of the background-only mask. Returns
+	 *  0 if the depth copy is disabled or this GL stack rejects it (fall back to the
+	 *  mask). */
+	GLuint captureViewportDepth();
 	float getWorldDepthZMin() const { return _worldDepthZMin; }
 	float getWorldDepthZMax() const { return _worldDepthZMax; }
 	/** Debug: draw the shadow map to the screen corner (shadow_map_debug). */
@@ -194,6 +200,10 @@ private:
 	// Optional GL depth-buffer copy (real depth, includes the character), used
 	// when 'enable_depth_copy' is on and the stack accepts it.
 	GLuint _postDepthCopyTex;
+	// GL depth-buffer copy taken mid-frame (before the wall drape) so the drape
+	// reconstructs real scene geometry - including depth-stamped props - instead of
+	// the background-only mask. 0 until first captured.
+	GLuint _shadowSceneDepthTex;
 
 	// Diagnostics: state of the last post pass' depth setup (read by postInfo).
 	bool _postDbgGLDepth;

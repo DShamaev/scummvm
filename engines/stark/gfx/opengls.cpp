@@ -101,6 +101,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_worldDepthZMax(0.0f),
 	_worldDepthArea(0),
 	_postDepthCopyTex(0),
+	_shadowSceneDepthTex(0),
 	_postDbgGLDepth(false),
 	_postDbgWorldMask(false),
 	_postDbgContact(false),
@@ -141,6 +142,7 @@ OpenGLSDriver::~OpenGLSDriver() {
 	freePostResources();
 	if (_magTex) { glDeleteTextures(1, &_magTex); _magTex = 0; }
 	if (_postDepthCopyTex) { glDeleteTextures(1, &_postDepthCopyTex); _postDepthCopyTex = 0; }
+	if (_shadowSceneDepthTex) { glDeleteTextures(1, &_shadowSceneDepthTex); _shadowSceneDepthTex = 0; }
 	if (_bloomTexA) { glDeleteTextures(1, &_bloomTexA); _bloomTexA = 0; }
 	if (_bloomTexB) { glDeleteTextures(1, &_bloomTexB); _bloomTexB = 0; }
 	if (_aoTexA) { glDeleteTextures(1, &_aoTexA); _aoTexA = 0; }
@@ -465,6 +467,37 @@ void OpenGLSDriver::bindWorldDepth() const {
 	if (_worldDepthBitmap) {
 		_worldDepthBitmap->bind();
 	}
+}
+
+GLuint OpenGLSDriver::captureViewportDepth() {
+	if (!ConfMan.getBool("enable_depth_copy")) {
+		return 0;
+	}
+	// The current viewport is the game region at whatever scale is in effect
+	// (Retina, and supersample if active); copying exactly it keeps the drape's
+	// fullscreen-quad UVs aligned with the copied depth regardless of resolution.
+	GLint vp[4];
+	glGetIntegerv(GL_VIEWPORT, vp);
+	if (vp[2] <= 0 || vp[3] <= 0) {
+		return 0;
+	}
+	if (_shadowSceneDepthTex == 0) {
+		glGenTextures(1, &_shadowSceneDepthTex);
+		glBindTexture(GL_TEXTURE_2D, _shadowSceneDepthTex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	glBindTexture(GL_TEXTURE_2D, _shadowSceneDepthTex);
+	while (glGetError() != GL_NO_ERROR) {} // clear stale errors
+	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, vp[0], vp[1], vp[2], vp[3], 0);
+	GLenum err = glGetError();
+	glBindTexture(GL_TEXTURE_2D, 0);
+	if (err != GL_NO_ERROR) {
+		return 0; // stack rejected the depth copy; caller falls back to the mask
+	}
+	return _shadowSceneDepthTex;
 }
 
 void OpenGLSDriver::getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const {
