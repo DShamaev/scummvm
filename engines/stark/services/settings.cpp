@@ -115,11 +115,11 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// lamps by strength so shadows cross-fade instead of the dominant light hard-
 	// switching as the character moves; 1 is the cheaper single-shadow behaviour.
 	ConfMan.registerDefault("shadow_light_count", 2);
-	// A second light only casts a shadow when it is at least this fraction (percent)
-	// as strong as the dominant light AND aimed differently - so ordinary one-lamp
-	// rooms stay at a single shadow and only genuine two-lamp scenes show two. Lower
-	// it to see second shadows more readily; raise it to suppress them.
-	ConfMan.registerDefault("shadow_second_light_min", 50);
+	// Relative strength (percent of the dominant light) at which a second, differently
+	// aimed light casts a FULL second shadow; below it the second shadow fades in
+	// smoothly (no pop) so two lamps cross-fade as the character moves between them.
+	// Lower it to see second shadows more readily; raise it to suppress them.
+	ConfMan.registerDefault("shadow_second_light_min", 60);
 	// Contact hardening (PCSS): shadow crisp at the feet, softening with distance.
 	// Off = a uniform-width penumbra (the simpler, steadier look). A diagnostic +
 	// preference toggle - turn off if the hardening detaches the shadow from the feet.

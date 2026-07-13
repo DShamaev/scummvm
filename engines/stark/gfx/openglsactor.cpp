@@ -1068,13 +1068,12 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 
 	float maxMag = bestMag[0];
 
-	// Gate the secondary lights: a second shadow should only appear for a genuinely
-	// comparable AND differently-aimed lamp. Otherwise a weak or near-opposite fill
-	// light throws a stray shadow disconnected from the character (which reads as a
-	// "misplaced" shadow). This keeps ordinary single-light rooms to one shadow.
+	// Keep a second light only if it aims a meaningfully different way from the
+	// dominant (a same-direction second shadow is redundant). Crucially, do NOT
+	// hard-gate on strength - its weight fades in smoothly below instead, so as the
+	// character walks between two lamps the shadows cross-fade rather than the
+	// single shadow JUMPING when the dominant flips from one to the other.
 	if (found > 1) {
-		float minRel = CLIP(ConfMan.hasKey("shadow_second_light_min")
-				? (int)ConfMan.getInt("shadow_second_light_min") : 50, 0, 100) / 100.0f;
 		int kept = 1;
 		for (int k = 1; k < found; k++) {
 			float rel = maxMag > 0.0f ? bestMag[k] / maxMag : 0.0f;
@@ -1084,9 +1083,9 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 			if (h0.getMagnitude() > 0.001f && hk.getMagnitude() > 0.001f) {
 				h0.normalize();
 				hk.normalize();
-				distinct = (h0.getX() * hk.getX() + h0.getY() * hk.getY()) < 0.75f; // >~40 deg apart
+				distinct = (h0.getX() * hk.getX() + h0.getY() * hk.getY()) < 0.9f; // not near-identical
 			}
-			if (rel >= minRel && distinct) {
+			if (distinct && rel > 0.05f) {   // tiny floor: drop only a negligible light
 				bestMag[kept] = bestMag[k];
 				bestDir[kept] = bestDir[k];
 				kept++;
@@ -1095,11 +1094,16 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		found = kept;
 	}
 
-	// Apply the cast angle (reach) to each and weight by strength relative to the
-	// dominant light: dominant = 1.0, weaker lamps proportionally fainter, so a lone
-	// light casts a full shadow and a rising second light fades in smoothly.
+	// Apply the cast angle (reach) and weight the lights. The dominant is full; a
+	// second light's weight is a smoothstep of its strength relative to the dominant
+	// - fully on once it approaches the dominant (so at the mid-point between two
+	// lamps both shadows are present) and fading to zero as it weakens, with no pop.
+	// shadow_second_light_min sets the relative strength for full second weight.
 	float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
 			? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
+	float hiFade = CLIP(ConfMan.hasKey("shadow_second_light_min")
+			? (int)ConfMan.getInt("shadow_second_light_min") : 60, 20, 100) / 100.0f;
+	float loFade = hiFade * 0.25f;
 	for (int k = 0; k < found; k++) {
 		Math::Vector3d dir = bestDir[k];
 		Math::Vector2d h(dir.x(), dir.y());
@@ -1114,7 +1118,14 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		}
 		dir.z() = -1.0f;
 		outDirs[k] = dir;
-		outWeights[k] = maxMag > 0.0f ? bestMag[k] / maxMag : 1.0f;
+
+		if (k == 0) {
+			outWeights[0] = 1.0f;
+		} else {
+			float rel = maxMag > 0.0f ? bestMag[k] / maxMag : 0.0f;
+			float t = CLIP((rel - loFade) / MAX(hiFade - loFade, 0.001f), 0.0f, 1.0f);
+			outWeights[k] = t * t * (3.0f - 2.0f * t);   // smoothstep => no pop
+		}
 	}
 
 	// One-shot diagnostic (setInt shadow_debug_log 1): how many shadow lights were
