@@ -142,13 +142,18 @@ void main() {
 	// floor that happen to line up behind April. Confine it to her vicinity.
 	//  - horizontal: fade past the shadow's real reach from her feet.
 	//  - vertical: fade out surfaces well below the floor (under-floor leaks).
+	// Horizontal fade is generous - the shadow-map frustum is the real limit on how
+	// far the shadow reaches; this only trims stray far leaks well beyond it.
 	float horizDist = length(world.xy - actorWorld.xy);
-	float horizFade = 1.0 - smoothstep(shadowReach * 0.75, shadowReach * 1.2, horizDist);
+	float horizFade = 1.0 - smoothstep(shadowReach * 1.5, shadowReach * 3.0, horizDist);
 	float vFade = smoothstep(actorWorld.z - 150.0, actorWorld.z - 30.0, world.z);
 	occ *= horizFade * vFade;
 
 	if (occ <= 0.0) {
 		discard;
 	}
-	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * occ);
+	// Dither to break the residual penumbra banding (the PCF gives ~26 discrete
+	// levels) into imperceptible noise instead of visible steps.
+	float dither = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.03;
+	outColor = vec4(0.0, 0.0, 0.0, clamp(shadowAlpha * occ + dither, 0.0, 1.0));
 }

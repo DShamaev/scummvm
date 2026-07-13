@@ -75,5 +75,8 @@ void main() {
 	if (occ <= 0.0) {
 		discard;
 	}
-	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * occ);
+	// Dither to break the residual penumbra banding (the PCF gives ~26 discrete
+	// levels) into imperceptible noise instead of visible steps.
+	float dither = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.03;
+	outColor = vec4(0.0, 0.0, 0.0, clamp(shadowAlpha * occ + dither, 0.0, 1.0));
 }

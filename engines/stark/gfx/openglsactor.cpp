@@ -639,9 +639,11 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	}
 
 	// A ground quad on the floor plane under the actor (world is z-up; the floor
-	// is at the actor's feet z). Sized to hold the shadow's reach. The shadow map
-	// lookup decides where within it the shadow actually falls.
-	const float S = 300.0f;
+	// is at the actor's feet z). Sized to hold the shadow's reach (grows with
+	// shadow_length_scale) so a long shadow isn't clipped by the quad edge. The
+	// shadow map lookup decides where within it the shadow actually falls.
+	float gReach = CLIP(ConfMan.hasKey("shadow_length_scale") ? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
+	const float S = 250.0f + 150.0f * gReach;
 	float z = position.z();
 	float quad[12] = {
 		position.x() - S, position.y() - S, z,
@@ -1060,12 +1062,40 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		return 1;
 	}
 
+	float maxMag = bestMag[0];
+
+	// Gate the secondary lights: a second shadow should only appear for a genuinely
+	// comparable AND differently-aimed lamp. Otherwise a weak or near-opposite fill
+	// light throws a stray shadow disconnected from the character (which reads as a
+	// "misplaced" shadow). This keeps ordinary single-light rooms to one shadow.
+	if (found > 1) {
+		float minRel = CLIP(ConfMan.hasKey("shadow_second_light_min")
+				? (int)ConfMan.getInt("shadow_second_light_min") : 50, 0, 100) / 100.0f;
+		int kept = 1;
+		for (int k = 1; k < found; k++) {
+			float rel = maxMag > 0.0f ? bestMag[k] / maxMag : 0.0f;
+			bool distinct = true;
+			Math::Vector2d h0(bestDir[0].x(), bestDir[0].y());
+			Math::Vector2d hk(bestDir[k].x(), bestDir[k].y());
+			if (h0.getMagnitude() > 0.001f && hk.getMagnitude() > 0.001f) {
+				h0.normalize();
+				hk.normalize();
+				distinct = (h0.getX() * hk.getX() + h0.getY() * hk.getY()) < 0.75f; // >~40 deg apart
+			}
+			if (rel >= minRel && distinct) {
+				bestMag[kept] = bestMag[k];
+				bestDir[kept] = bestDir[k];
+				kept++;
+			}
+		}
+		found = kept;
+	}
+
 	// Apply the cast angle (reach) to each and weight by strength relative to the
 	// dominant light: dominant = 1.0, weaker lamps proportionally fainter, so a lone
 	// light casts a full shadow and a rising second light fades in smoothly.
 	float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
 			? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
-	float maxMag = bestMag[0];
 	for (int k = 0; k < found; k++) {
 		Math::Vector3d dir = bestDir[k];
 		Math::Vector2d h(dir.x(), dir.y());

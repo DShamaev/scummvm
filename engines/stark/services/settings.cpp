@@ -115,6 +115,11 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// lamps by strength so shadows cross-fade instead of the dominant light hard-
 	// switching as the character moves; 1 is the cheaper single-shadow behaviour.
 	ConfMan.registerDefault("shadow_light_count", 2);
+	// A second light only casts a shadow when it is at least this fraction (percent)
+	// as strong as the dominant light AND aimed differently - so ordinary one-lamp
+	// rooms stay at a single shadow and only genuine two-lamp scenes show two. Lower
+	// it to see second shadows more readily; raise it to suppress them.
+	ConfMan.registerDefault("shadow_second_light_min", 50);
 	ConfMan.registerDefault("shadow_wall", false);       // drape over walls/furniture (opt-in; needs an accurate depth map)
 	ConfMan.registerDefault("shadow_bg_debug", 0);       // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light UV
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
