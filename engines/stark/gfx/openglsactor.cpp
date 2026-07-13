@@ -1114,6 +1114,19 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		outDirs[k] = dir;
 		outWeights[k] = maxMag > 0.0f ? bestMag[k] / maxMag : 1.0f;
 	}
+
+	// One-shot diagnostic (setInt shadow_debug_log 1): how many shadow lights were
+	// kept and their weights, so a scene showing only one shadow can be understood
+	// (the 2nd was too weak or too aligned with the 1st, or there is only one).
+	if (ConfMan.hasKey("shadow_debug_log") && ConfMan.getInt("shadow_debug_log") > 0) {
+		Common::String info;
+		for (int k = 0; k < found; k++) {
+			info += Common::String::format("[%d] w=%.2f dir=(%.2f,%.2f,%.2f) ",
+					k, outWeights[k], outDirs[k].x(), outDirs[k].y(), outDirs[k].z());
+		}
+		warning("Stark shadowLights: kept=%d of wanted=%d | %s", found, maxLights, info.c_str());
+		ConfMan.setInt("shadow_debug_log", 0);
+	}
 	return found;
 }
 
