@@ -527,10 +527,10 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	invView.inverse();
 	invView.transpose();
 
-	// Inverse projection (clip -> eye) for the real-depth reconstruction path.
-	Math::Matrix4 invProj = StarkScene->getProjectionMatrix();
-	invProj.inverse();
-	invProj.transpose();
+	// Depth linearization terms for the real-depth path: eyeZ = B / (ndcZ + A),
+	// A = proj(2,2), B = proj(3,2) (makeFrustumMatrix layout). Reusing the mask
+	// path's x/y reconstruction is far more robust than inverting the frustum.
+	Math::Vector2d projDepth(projection(2, 2), projection(3, 2));
 
 	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
 	lightVP0.transpose();
@@ -582,7 +582,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform1f("shadowReach", 150.0f * reach);
 	// Real-depth reconstruction (props included) when the depth copy succeeded.
 	_shadowBgShader->setUniform("sceneDepthTex", 2);
-	_shadowBgShader->setUniform("invProj", invProj);
+	_shadowBgShader->setUniform("projDepth", projDepth);
 	_shadowBgShader->setUniform1f("useRealDepth", sceneDepthTex != 0 ? 1.0f : 0.0f);
 
 	glActiveTexture(GL_TEXTURE3);

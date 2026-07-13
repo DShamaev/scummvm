@@ -12,11 +12,13 @@ uniform vec2 projScale;   // (proj[0][0], proj[1][1]) - eye-space x/y reconstruc
 uniform mat4 invView;     // eye space -> world space
 
 // Real GL depth path: when useRealDepth > 0.5, reconstruct each pixel from the
-// actual depth buffer (which includes depth-stamped props and furniture) via the
-// inverse projection, instead of the background-only mask - so the shadow lands on
-// props at their true position rather than the wall behind them.
+// actual depth buffer (which includes depth-stamped props and furniture) instead
+// of the background-only mask - so the shadow lands on props at their true
+// position rather than the wall behind them. The window depth is linearized to
+// eye distance analytically (projDepth = the projection's (2,2) and (3,2) terms),
+// then run through the SAME x/y reconstruction as the mask path below.
 uniform sampler2D sceneDepthTex;
-uniform mat4 invProj;     // clip space -> eye space
+uniform vec2 projDepth;   // (proj(2,2), proj(3,2)) => eyeZ = B / (ndcZ + A)
 uniform float useRealDepth;
 
 // Up to two shadow-casting lights, union-blended by weight (nearby lamps
@@ -96,12 +98,15 @@ void main() {
 
 	vec3 eyePos;
 	if (useRealDepth > 0.5) {
-		// Reconstruct from the real depth buffer: NDC.xy from the screen, NDC.z
-		// from the sampled window depth, un-projected to eye space. Includes props.
+		// Real depth (props included): linearize the window depth to eye distance,
+		// then reconstruct x/y exactly like the mask path so props land consistently
+		// with the background. eyeZ = B / (ndcZ + A), A=proj(2,2), B=proj(3,2).
 		float d = texture(sceneDepthTex, vUV).r;
-		vec4 clip = vec4(ndc, d * 2.0 - 1.0, 1.0);
-		vec4 eh = invProj * clip;
-		eyePos = eh.xyz / eh.w;
+		float ndcZ = d * 2.0 - 1.0;
+		float eyeZ = projDepth.y / (ndcZ + projDepth.x);
+		eyePos.z = -eyeZ;
+		eyePos.x = ndc.x * eyeZ / projScale.x;
+		eyePos.y = ndc.y * eyeZ / projScale.y;
 	} else {
 		// Background-mask path: eye z from the calibrated mask, x/y from NDC.
 		float eyeZ = mix(zMin, zMax, norm);
