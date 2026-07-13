@@ -408,11 +408,27 @@ void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Mat
 	}
 	L.normalize();
 
-	// Frame the actor: look at a point near its mid-height, from up the light.
-	// Extents are first-pass guesses in world units, tuned via the debug view.
+	// The cast shadow's length scales with reach (shadow_length_scale); a point at
+	// height H throws its shadow ~H*reach along the floor. Frame April AND that
+	// shadow, and slide the frame toward where the shadow falls so the shadow map's
+	// resolution is spent on the shadow (which climbs the walls) rather than empty
+	// floor behind her - otherwise a tightly-framed map clips the shadow before it
+	// reaches any wall/furniture.
+	float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
+			? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
+	float shadowLen = 150.0f * reach;   // ~April height * reach, in world units
+
 	float dist = 400.0f;
 	Math::Vector3d center = position;
 	center.z() += 90.0f;
+	// Ground heading the shadow travels (light's horizontal direction); shift the
+	// frame half a shadow-length that way so both April and the shadow tip fit.
+	Math::Vector2d ground(L.x(), L.y());
+	if (ground.getMagnitude() > 0.0001f) {
+		ground.normalize();
+		center.x() += ground.getX() * shadowLen * 0.5f;
+		center.y() += ground.getY() * shadowLen * 0.5f;
+	}
 	Math::Vector3d eye = center - L * dist;
 	Math::Vector3d up(0.0f, 0.0f, 1.0f);
 	if (ABS(L.z()) > 0.99f) {
@@ -425,10 +441,12 @@ void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Mat
 	lightView.translate(-eye);
 
 	// Orthographic projection built like makeFrustumMatrix (same operator()
-	// positions), then transposed like scene._projectionMatrix.
-	float halfExtent = 150.0f;
+	// positions), then transposed like scene._projectionMatrix. halfExtent covers
+	// April's radius plus half the shadow (the frame is centred on their midpoint);
+	// farZ is padded so a long, low shadow isn't clipped in depth.
+	float halfExtent = 120.0f + 0.6f * shadowLen;
 	float nearZ = 1.0f;
-	float farZ = 2.0f * dist;
+	float farZ = 2.0f * dist + 2.0f * shadowLen;
 	Math::Matrix4 lightProj;
 	lightProj(0, 0) = 1.0f / halfExtent;
 	lightProj(1, 1) = 1.0f / halfExtent;
@@ -467,7 +485,7 @@ void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Mat
 	}
 }
 
-bool OpenGLSActorRenderer::renderShadowBackground() {
+bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position) {
 	if (!_gfx->isShadowMapValid() || !_gfx->hasWorldDepth()) {
 		return false;
 	}
@@ -527,6 +545,11 @@ bool OpenGLSActorRenderer::renderShadowBackground() {
 	_shadowBgShader->setUniform1f("shadowSoftness", soft);
 	_shadowBgShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
 	_shadowBgShader->setUniform1f("bgDebug", (float)bgDebug);
+	// Spatial falloff around April's feet: keeps the drape on nearby walls/furniture
+	// and off far surfaces / under-floor areas that happen to fall in the frustum.
+	_shadowBgShader->setUniform("actorWorld", position);
+	float reach = CLIP(ConfMan.hasKey("shadow_length_scale") ? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
+	_shadowBgShader->setUniform1f("shadowReach", 150.0f * reach);
 
 	glActiveTexture(GL_TEXTURE1);
 	_gfx->bindWorldDepth();
@@ -555,14 +578,16 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 			Math::Matrix4 iv = StarkScene->getViewMatrix();
 			iv.inverse();
 			// invView translation = camera world position.
+			float dbgReach = CLIP(ConfMan.hasKey("shadow_length_scale") ? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
 			warning("Stark shadow-bg: projScale=(%.4f,%.4f) actorPos=(%.1f,%.1f,%.1f) "
-			        "camPos~(%.1f,%.1f,%.1f) zMin=%.1f zMax=%.1f lightHalfExtent=150 dist=400",
+			        "camPos~(%.1f,%.1f,%.1f) zMin=%.1f zMax=%.1f reach=%.2f shadowLen=%.0f halfExtent=%.0f",
 			        pj(0, 0), pj(1, 1), position.x(), position.y(), position.z(),
 			        iv(0, 3), iv(1, 3), iv(2, 3),
-			        _gfx->getWorldDepthZMin(), _gfx->getWorldDepthZMax());
+			        _gfx->getWorldDepthZMin(), _gfx->getWorldDepthZMax(),
+			        dbgReach, 150.0f * dbgReach, 120.0f + 0.6f * 150.0f * dbgReach);
 			ConfMan.setInt("shadow_bg_debug", 0);
 		}
-		if (renderShadowBackground()) {
+		if (renderShadowBackground(position)) {
 			return;
 		}
 	}
@@ -857,15 +882,14 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 			_shadowDominantIdx = bestIdx;
 		}
 
-		// Set the shadow length from the light's DIRECTION but a tunable reach,
-		// decoupled from its raw horizontal magnitude. The overhead casters we now
-		// pick are steep (small horizontal), so keying length off that magnitude
-		// pinned the shadow under the feet. shadow_length_scale (percent) now sets
-		// how far the shadow stretches in the light's horizontal direction; the
-		// z = -1 vertical then fixes the cast angle (bigger reach = longer shadow).
-		int scalePercent = ConfMan.hasKey("shadow_length_scale")
-				? CLIP((int)ConfMan.getInt("shadow_length_scale"), 100, 4000) : 600;
-		float reach = StarkScene->getMaxShadowLength() * (scalePercent / 100.0f);
+		// Set the shadow angle directly from shadow_length_scale, decoupled from
+		// the game's tiny built-in cap and from the light's steepness. reach is the
+		// horizontal:vertical ratio of the cast direction (z = -1), so a point at
+		// height H throws its shadow ~H*reach along the floor. Bigger reach = a
+		// lower, longer shadow that can actually reach walls/furniture. (The steep
+		// overhead casters we pick would otherwise give a stub under the feet.)
+		float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
+				? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
 
 		Math::Vector2d h(dir.x(), dir.y());
 		if (h.getMagnitude() > 0.0001f) {

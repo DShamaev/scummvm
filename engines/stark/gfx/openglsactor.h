@@ -71,7 +71,7 @@ protected:
 	// (floor, walls, furniture) by reconstructing each pixel's world position
 	// from the background depth mask. Falls back to the ground quad when there's
 	// no depth mask. Returns false if it couldn't run.
-	bool renderShadowBackground();
+	bool renderShadowBackground(const Math::Vector3d &position);
 
 	void clearVertices();
 	void uploadVertices();

@@ -18,6 +18,8 @@ uniform float shadowBias;
 uniform vec2 shadowTexel;
 uniform float shadowSoftness;
 uniform float bgDebug;   // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light-space UV
+uniform vec3 actorWorld; // April's feet in world space, for the spatial falloff
+uniform float shadowReach; // max horizontal shadow extent (world units)
 
 float decodeMask(vec2 uv) {
 	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y)); // mask is top-origin
@@ -78,6 +80,21 @@ void main() {
 		}
 	}
 	sh /= 25.0;
+
+	if (sh <= 0.0) {
+		discard;
+	}
+
+	// Spatial falloff: the screen-space drape would otherwise darken ANY pixel
+	// that lands in the light frustum, including far walls and surfaces BELOW the
+	// floor that happen to line up behind April. Confine it to her vicinity.
+	//  - horizontal: fade past the shadow's real reach from her feet.
+	//  - vertical: fade out surfaces well below the floor (under-floor leaks); the
+	//    shadow should climb from the floor upward, not spill beneath it.
+	float horizDist = length(world.xy - actorWorld.xy);
+	float horizFade = 1.0 - smoothstep(shadowReach * 0.75, shadowReach * 1.2, horizDist);
+	float vFade = smoothstep(actorWorld.z - 150.0, actorWorld.z - 30.0, world.z);
+	sh *= horizFade * vFade;
 
 	if (sh <= 0.0) {
 		discard;

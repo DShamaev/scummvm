@@ -106,6 +106,11 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault("shadow_map_bias", 20);      // depth bias / 100000 (acne vs peter-panning)
 	ConfMan.registerDefault("shadow_map_softness", 2);   // PCF spread in texels (1 = crisp, higher = softer)
 	ConfMan.registerDefault("shadow_map_depth_bias", 4); // polygon offset so furniture occludes the floor shadow
+	// Shadow length: horizontal:vertical ratio of the cast direction, x100. 200 =
+	// a point throws its shadow ~2x its height along the floor (long enough to
+	// reach nearby walls). Higher = longer/lower; the shadow-map frustum grows to
+	// match so the shadow isn't clipped before it climbs the wall.
+	ConfMan.registerDefault("shadow_length_scale", 200);
 	ConfMan.registerDefault("shadow_wall", false);       // drape over walls/furniture (opt-in; needs an accurate depth map)
 	ConfMan.registerDefault("shadow_bg_debug", 0);       // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light UV
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
