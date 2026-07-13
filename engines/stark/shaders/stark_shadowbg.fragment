@@ -71,7 +71,27 @@ void main() {
 	}
 	float fragDepth = lndc.z * 0.5 + 0.5;
 
-	vec2 stepv = shadowTexel * shadowSoftness;
+	// Contact hardening (PCSS-lite): crisp near the caster, softer with distance.
+	vec2 searchStep = shadowTexel * shadowSoftness;
+	float blockerSum = 0.0;
+	float blockerCount = 0.0;
+	for (int y = -2; y <= 2; y++) {
+		for (int x = -2; x <= 2; x++) {
+			float od = occluderDepth(suv + vec2(float(x), float(y)) * searchStep);
+			if (fragDepth - shadowBias > od) {
+				blockerSum += od;
+				blockerCount += 1.0;
+			}
+		}
+	}
+	if (blockerCount < 0.5) {
+		discard;
+	}
+	float gap = max(fragDepth - blockerSum / blockerCount, 0.0);
+	float hard = clamp(gap * 8.0, 0.0, 1.0);
+	float penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
+
+	vec2 stepv = shadowTexel * penumbra;
 	float sh = 0.0;
 	for (int y = -2; y <= 2; y++) {
 		for (int x = -2; x <= 2; x++) {

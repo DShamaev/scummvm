@@ -26,13 +26,36 @@ void main() {
 
 	float fragDepth = ndc.z * 0.5 + 0.5;
 
-	// 5x5 PCF for a soft edge; shadowSoftness scales the sample spread so the
-	// penumbra can be dialed from crisp (1) to wide (higher).
-	vec2 step = shadowTexel * shadowSoftness;
+	// Contact hardening (PCSS-lite): a real shadow is crisp where the caster
+	// touches the ground and softens with distance from it. First search for
+	// blockers over the max penumbra, average their depth, then scale the PCF
+	// kernel by the receiver-to-blocker gap so near the feet it is tight and
+	// further out it widens.
+	vec2 searchStep = shadowTexel * shadowSoftness;
+	float blockerSum = 0.0;
+	float blockerCount = 0.0;
+	for (int y = -2; y <= 2; y++) {
+		for (int x = -2; x <= 2; x++) {
+			float od = occluderDepth(uv + vec2(float(x), float(y)) * searchStep);
+			if (fragDepth - shadowBias > od) {
+				blockerSum += od;
+				blockerCount += 1.0;
+			}
+		}
+	}
+	if (blockerCount < 0.5) {
+		discard; // no blocker => fully lit
+	}
+	float avgBlocker = blockerSum / blockerCount;
+	float gap = max(fragDepth - avgBlocker, 0.0);
+	float hard = clamp(gap * 8.0, 0.0, 1.0);
+	float penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
+
+	vec2 stepv = shadowTexel * penumbra;
 	float sh = 0.0;
 	for (int y = -2; y <= 2; y++) {
 		for (int x = -2; x <= 2; x++) {
-			float od = occluderDepth(uv + vec2(float(x), float(y)) * step);
+			float od = occluderDepth(uv + vec2(float(x), float(y)) * stepv);
 			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
 		}
 	}
