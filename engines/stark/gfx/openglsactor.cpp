@@ -527,10 +527,12 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	invView.inverse();
 	invView.transpose();
 
-	// Depth linearization terms for the real-depth path: eyeZ = B / (ndcZ + A),
-	// A = proj(2,2), B = proj(3,2) (makeFrustumMatrix layout). Reusing the mask
-	// path's x/y reconstruction is far more robust than inverting the frustum.
-	Math::Vector2d projDepth(projection(2, 2), projection(3, 2));
+	// Depth linearization terms for the real-depth path: eyeZ = B / (ndcZ + A).
+	// makeFrustumMatrix puts A at (2,2) and B at (3,2), but scene.cpp stores the
+	// projection TRANSPOSED, so in what getProjectionMatrix() returns B is at
+	// (2,3) - (3,2) there is the -1 w-term. Reusing the mask path's x/y
+	// reconstruction is far more robust than inverting the frustum.
+	Math::Vector2d projDepth(projection(2, 2), projection(2, 3));
 
 	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
 	lightVP0.transpose();
