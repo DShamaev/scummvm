@@ -14,12 +14,11 @@ uniform mat4 invView;     // eye space -> world space
 // Real GL depth path: when useRealDepth > 0.5, reconstruct each pixel from the
 // actual depth buffer (which includes depth-stamped props and furniture) instead
 // of the background-only mask - so the shadow lands on props at their true
-// position rather than the wall behind them. The window depth is linearized to
-// eye distance from the near/far clip planes (unambiguous, no matrix element
-// guessing), then run through the SAME x/y reconstruction as the mask path below.
+// position rather than the wall behind them. World is recovered directly with the
+// engine's own unprojection (inverse of projection*view, the same matrix mouse
+// picking uses), which is exact and accounts for the scrolled/asymmetric frustum.
 uniform sampler2D sceneDepthTex;
-uniform float nearClip;
-uniform float farClip;
+uniform mat4 invViewProj;   // clip space -> world space
 uniform float useRealDepth;
 
 // Up to two shadow-casting lights, union-blended by weight (nearby lamps
@@ -97,26 +96,23 @@ void main() {
 	vec2 ndc = vUV * 2.0 - 1.0;
 	float norm = decodeMask(vUV);            // kept for the mask fallback + debug 1
 
-	vec3 eyePos;
+	vec3 eyePos = vec3(0.0);   // only used by debug view 2 (mask path)
+	vec4 world;
 	if (useRealDepth > 0.5) {
-		// Real depth (props included): linearize the window depth to eye distance
-		// via the near/far clip planes, then reconstruct x/y exactly like the mask
-		// path so props land consistently with the background.
+		// Real depth (props included): unproject NDC + window depth straight to
+		// world with the engine's inverse(projection*view). Exact, skew-correct.
 		float d = texture(sceneDepthTex, vUV).r;
-		float ndcZ = d * 2.0 - 1.0;
-		float eyeZ = (2.0 * nearClip * farClip) / (farClip + nearClip - ndcZ * (farClip - nearClip));
-		eyePos.z = -eyeZ;
-		eyePos.x = ndc.x * eyeZ / projScale.x;
-		eyePos.y = ndc.y * eyeZ / projScale.y;
+		vec4 clip = vec4(ndc, d * 2.0 - 1.0, 1.0);
+		vec4 wh = invViewProj * clip;
+		world = wh / wh.w;
 	} else {
 		// Background-mask path: eye z from the calibrated mask, x/y from NDC.
 		float eyeZ = mix(zMin, zMax, norm);
 		eyePos.z = -eyeZ;
 		eyePos.x = ndc.x * eyeZ / projScale.x;
 		eyePos.y = ndc.y * eyeZ / projScale.y;
+		world = invView * vec4(eyePos, 1.0);
 	}
-
-	vec4 world = invView * vec4(eyePos, 1.0);
 
 	// Diagnostic visualizations (opaque, fill the whole screen):
 	//   1 = mask depth (grey), 2 = reconstructed eye x/y, 3 = world x/y, 4 = the

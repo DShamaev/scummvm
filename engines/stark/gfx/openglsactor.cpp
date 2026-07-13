@@ -527,10 +527,12 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	invView.inverse();
 	invView.transpose();
 
-	// Near/far clip planes for the real-depth linearization (unambiguous; avoids
-	// the frustum matrix's transposed-storage element confusion).
-	float nearClip = StarkScene->getNearClipPlane();
-	float farClip = StarkScene->getFarClipPlane();
+	// Engine unprojection for the real-depth path: inverse(projection * view) maps
+	// clip -> world, exactly as scene.cpp does for mouse picking. Transposed for GL
+	// upload (shader multiplies invViewProj * clip).
+	Math::Matrix4 invViewProj = StarkScene->getProjectionMatrix() * StarkScene->getViewMatrix();
+	invViewProj.inverse();
+	invViewProj.transpose();
 
 	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
 	lightVP0.transpose();
@@ -582,8 +584,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform1f("shadowReach", 150.0f * reach);
 	// Real-depth reconstruction (props included) when the depth copy succeeded.
 	_shadowBgShader->setUniform("sceneDepthTex", 2);
-	_shadowBgShader->setUniform1f("nearClip", nearClip);
-	_shadowBgShader->setUniform1f("farClip", farClip);
+	_shadowBgShader->setUniform("invViewProj", invViewProj);
 	_shadowBgShader->setUniform1f("useRealDepth", sceneDepthTex != 0 ? 1.0f : 0.0f);
 
 	glActiveTexture(GL_TEXTURE3);
