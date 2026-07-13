@@ -446,7 +446,9 @@ void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Mat
 	// farZ is padded so a long, low shadow isn't clipped in depth.
 	float halfExtent = 120.0f + 0.6f * shadowLen;
 	float nearZ = 1.0f;
-	float farZ = 2.0f * dist + 2.0f * shadowLen;
+	// Only needs to bracket the caster's depth from the (shadow-offset) eye, not the
+	// whole floor: keeping farZ tight spends the depth precision where it matters.
+	float farZ = dist + shadowLen + 250.0f;
 	Math::Matrix4 lightProj;
 	lightProj(0, 0) = 1.0f / halfExtent;
 	lightProj(1, 1) = 1.0f / halfExtent;

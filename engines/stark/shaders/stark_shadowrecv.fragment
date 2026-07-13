@@ -10,8 +10,8 @@ uniform vec2 shadowTexel;    // 1.0 / shadow-map size (for PCF)
 uniform float shadowSoftness; // PCF spread in texels (1 = crisp, higher = softer)
 
 float occluderDepth(vec2 uv) {
-	vec4 c = texture(shadowTex, uv);
-	return (c.r * 255.0 * 256.0 + c.g * 255.0) / 65535.0;
+	vec3 c = texture(shadowTex, uv).rgb;   // 24-bit depth packed in RGB
+	return dot(c, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
 }
 
 void main() {
