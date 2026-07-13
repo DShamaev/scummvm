@@ -2,41 +2,43 @@ OUTPUT
 
 in vec3 vWorld;
 
-uniform mat4 lightVP;        // world -> light clip space
-uniform sampler2D shadowTex; // depth-in-colour shadow map
+// Up to two shadow-casting lights, each with its own shadow map + world->light
+// matrix + weight. Their shadows are union-blended by weight so nearby lamps
+// cross-fade instead of the single dominant light hard-switching.
+uniform mat4 lightVP0;
+uniform mat4 lightVP1;
+uniform sampler2D shadowTex0; // depth-in-colour shadow map (light 0)
+uniform sampler2D shadowTex1; // depth-in-colour shadow map (light 1)
+uniform float weight0;
+uniform float weight1;
+uniform float shadowCount;    // 1 or 2
+
 uniform float shadowAlpha;   // darkness of the fully-occluded shadow
 uniform float shadowBias;    // depth bias to avoid self-shadow acne
 uniform vec2 shadowTexel;    // 1.0 / shadow-map size (for PCF)
-uniform float shadowSoftness; // PCF spread in texels (1 = crisp, higher = softer)
+uniform float shadowSoftness; // penumbra scale in texels
 
-float occluderDepth(vec2 uv) {
-	vec3 c = texture(shadowTex, uv).rgb;   // 24-bit depth packed in RGB
-	return dot(c, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+float decodeDepth(vec4 c) {
+	return dot(c.rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0)); // 24-bit RGB pack
 }
 
-void main() {
-	vec4 lc = lightVP * vec4(vWorld, 1.0);
+// Shadow factor [0,1] for one light: PCSS-lite contact hardening (crisp at the
+// contact point, softening with distance from the caster).
+float shadowFactor(sampler2D tex, mat4 lvp) {
+	vec4 lc = lvp * vec4(vWorld, 1.0);
 	vec3 ndc = lc.xyz / lc.w;
 	vec2 uv = ndc.xy * 0.5 + 0.5;
-
-	// Outside the shadow map (light frustum) => not shadowed.
 	if (uv.x < 0.01 || uv.x > 0.99 || uv.y < 0.01 || uv.y > 0.99) {
-		discard;
+		return 0.0;
 	}
-
 	float fragDepth = ndc.z * 0.5 + 0.5;
 
-	// Contact hardening (PCSS-lite): a real shadow is crisp where the caster
-	// touches the ground and softens with distance from it. First search for
-	// blockers over the max penumbra, average their depth, then scale the PCF
-	// kernel by the receiver-to-blocker gap so near the feet it is tight and
-	// further out it widens.
 	vec2 searchStep = shadowTexel * shadowSoftness;
 	float blockerSum = 0.0;
 	float blockerCount = 0.0;
 	for (int y = -2; y <= 2; y++) {
 		for (int x = -2; x <= 2; x++) {
-			float od = occluderDepth(uv + vec2(float(x), float(y)) * searchStep);
+			float od = decodeDepth(texture(tex, uv + vec2(float(x), float(y)) * searchStep));
 			if (fragDepth - shadowBias > od) {
 				blockerSum += od;
 				blockerCount += 1.0;
@@ -44,10 +46,9 @@ void main() {
 		}
 	}
 	if (blockerCount < 0.5) {
-		discard; // no blocker => fully lit
+		return 0.0;
 	}
-	float avgBlocker = blockerSum / blockerCount;
-	float gap = max(fragDepth - avgBlocker, 0.0);
+	float gap = max(fragDepth - blockerSum / blockerCount, 0.0);
 	float hard = clamp(gap * 8.0, 0.0, 1.0);
 	float penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
 
@@ -55,14 +56,24 @@ void main() {
 	float sh = 0.0;
 	for (int y = -2; y <= 2; y++) {
 		for (int x = -2; x <= 2; x++) {
-			float od = occluderDepth(uv + vec2(float(x), float(y)) * stepv);
+			float od = decodeDepth(texture(tex, uv + vec2(float(x), float(y)) * stepv));
 			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
 		}
 	}
-	sh /= 25.0;
+	return sh / 25.0;
+}
 
-	if (sh <= 0.0) {
+void main() {
+	// Union blend: visibility is the product of each light's non-shadow, so the
+	// overlap darkens once (not twice) and a weaker light adds a fainter shadow.
+	float visible = 1.0 - shadowFactor(shadowTex0, lightVP0) * weight0;
+	if (shadowCount > 1.5) {
+		visible *= 1.0 - shadowFactor(shadowTex1, lightVP1) * weight1;
+	}
+	float occ = 1.0 - visible;
+
+	if (occ <= 0.0) {
 		discard;
 	}
-	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * sh);
+	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * occ);
 }

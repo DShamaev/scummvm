@@ -86,6 +86,14 @@ protected:
 
 	Math::Vector3d computeShadowLightDirection(const LightEntryArray &lights, const Math::Vector3d &actorPosition);
 
+	// Select up to 'maxLights' (<= kMaxShadowLights) shadow-casting lights, ordered
+	// by contribution. outDirs receive the cast directions (reach applied, z = -1)
+	// and outWeights the relative strength (dominant = 1.0, others proportional).
+	// Returns the count. Receivers blend the per-light shadows by these weights so
+	// nearby lamps cross-fade instead of the single dominant light hard-switching.
+	int computeShadowLights(const LightEntryArray &lights, const Math::Vector3d &actorPosition,
+			Math::Vector3d *outDirs, float *outWeights, int maxLights);
+
 	// The light index the shadow currently follows. Using the single dominant
 	// light (not the sum of all) stops the shadow flipping when the character
 	// crosses between opposing lamps; hysteresis on this index stops it flickering

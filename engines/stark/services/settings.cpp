@@ -111,6 +111,10 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// reach nearby walls). Higher = longer/lower; the shadow-map frustum grows to
 	// match so the shadow isn't clipped before it climbs the wall.
 	ConfMan.registerDefault("shadow_length_scale", 200);
+	// Number of simultaneous shadow-casting lights (1-2). 2 blends the two strongest
+	// lamps by strength so shadows cross-fade instead of the dominant light hard-
+	// switching as the character moves; 1 is the cheaper single-shadow behaviour.
+	ConfMan.registerDefault("shadow_light_count", 2);
 	ConfMan.registerDefault("shadow_wall", false);       // drape over walls/furniture (opt-in; needs an accurate depth map)
 	ConfMan.registerDefault("shadow_bg_debug", 0);       // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light UV
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =

@@ -74,13 +74,18 @@ public:
 	 * the size to render the caster into (depth-encoded-in-colour); the caller
 	 * draws the caster with the shadow-map shader, then renderShadowMapEnd stores
 	 * the result + light matrix and restores the engine framebuffer. Receivers
-	 * read getShadowMapTexture()/getShadowLightViewProj(). No-op / invalid when
-	 * shadow mapping is disabled or the FBO is incomplete.
+	 * read getShadowMapTexture(i)/getShadowLightViewProj(i)/getShadowWeight(i) for
+	 * each of getShadowMapCount() lights. No-op / invalid when shadow mapping is
+	 * disabled or the FBO is incomplete.
 	 */
-	int renderShadowMapBegin();
-	void renderShadowMapEnd(const Math::Matrix4 &lightViewProj);
-	GLuint getShadowMapTexture() const { return _shadowValid ? _shadowTex : 0; }
-	Math::Matrix4 getShadowLightViewProj() const { return _shadowLightVP; }
+	enum { kMaxShadowLights = 2 };
+	int renderShadowMapBegin(int index);
+	void renderShadowMapEnd(int index, const Math::Matrix4 &lightViewProj, float weight);
+	void setShadowMapCount(int count);
+	int getShadowMapCount() const { return _shadowValid ? _shadowCount : 0; }
+	GLuint getShadowMapTexture(int i) const { return _shadowValid ? _shadowTex[i] : 0; }
+	Math::Matrix4 getShadowLightViewProj(int i) const { return _shadowLightVP[i]; }
+	float getShadowWeight(int i) const { return _shadowWeight[i]; }
 	bool isShadowMapValid() const { return _shadowValid; }
 
 	/** The current location's background depth mask (no character), for the
@@ -158,13 +163,17 @@ private:
 	OpenGL::Shader *_shadowRecvShader;
 	OpenGL::Shader *_shadowBgShader;
 
-	// Shadow mapping: the caster (April) is rendered from the light into this
-	// offscreen buffer as depth-encoded-in-colour, then receivers sample it.
+	// Shadow mapping: the caster (April) is rendered from up to kMaxShadowLights
+	// lights into these offscreen buffers (depth-encoded-in-colour); receivers
+	// sample all of them and blend by weight, so nearby lamps each cast a shadow
+	// that cross-fades instead of the single dominant light hard-switching.
 	GLuint _shadowFbo;
-	GLuint _shadowTex;
+	GLuint _shadowTex[kMaxShadowLights];
 	GLuint _shadowDepthRBO;
 	int _shadowSize;
-	Math::Matrix4 _shadowLightVP;
+	Math::Matrix4 _shadowLightVP[kMaxShadowLights];
+	float _shadowWeight[kMaxShadowLights];
+	int _shadowCount;
 	bool _shadowValid;
 	GLuint _surfaceVBO;
 	GLuint _fadeVBO;

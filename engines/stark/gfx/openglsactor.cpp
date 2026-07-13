@@ -396,92 +396,100 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 
 void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Math::Vector3d &position,
 		const LightEntryArray &lights) {
-	int size = _gfx->renderShadowMapBegin();
-	if (size == 0) {
-		return; // shadow mapping disabled or FBO unavailable
+	if (!ConfMan.getBool("enable_shadow_mapping")) {
+		return;
 	}
 
-	// World-space light direction (light travels along L; z = -1 is downward).
-	Math::Vector3d L = computeShadowLightDirection(lights, position);
-	if (L.getMagnitude() < 0.001f) {
-		L = Math::Vector3d(0.0f, 0.0f, -1.0f);
+	// Select the strongest shadow-casting lights and render April into one shadow
+	// map each; receivers blend them by weight so lamps cross-fade rather than the
+	// dominant light hard-switching as she moves.
+	int wanted = CLIP(ConfMan.hasKey("shadow_light_count")
+			? (int)ConfMan.getInt("shadow_light_count") : 2, 1, (int)OpenGLSDriver::kMaxShadowLights);
+	Math::Vector3d dirs[OpenGLSDriver::kMaxShadowLights];
+	float weights[OpenGLSDriver::kMaxShadowLights];
+	int count = computeShadowLights(lights, position, dirs, weights, wanted);
+	if (count == 0) {
+		return;
 	}
-	L.normalize();
 
-	// The cast shadow's length scales with reach (shadow_length_scale); a point at
-	// height H throws its shadow ~H*reach along the floor. Frame April AND that
-	// shadow, and slide the frame toward where the shadow falls so the shadow map's
-	// resolution is spent on the shadow (which climbs the walls) rather than empty
-	// floor behind her - otherwise a tightly-framed map clips the shadow before it
-	// reaches any wall/furniture.
 	float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
 			? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
 	float shadowLen = 150.0f * reach;   // ~April height * reach, in world units
-
-	float dist = 400.0f;
-	Math::Vector3d center = position;
-	center.z() += 90.0f;
-	// Ground heading the shadow travels (light's horizontal direction); shift the
-	// frame half a shadow-length that way so both April and the shadow tip fit.
-	Math::Vector2d ground(L.x(), L.y());
-	if (ground.getMagnitude() > 0.0001f) {
-		ground.normalize();
-		center.x() += ground.getX() * shadowLen * 0.5f;
-		center.y() += ground.getY() * shadowLen * 0.5f;
-	}
-	Math::Vector3d eye = center - L * dist;
-	Math::Vector3d up(0.0f, 0.0f, 1.0f);
-	if (ABS(L.z()) > 0.99f) {
-		up = Math::Vector3d(0.0f, 1.0f, 0.0f);
-	}
-
-	// Build the light view the same way scene.cpp builds its view matrix.
-	Math::Matrix4 lightView = Math::makeLookAtMatrix(eye, center, up);
-	lightView.transpose();
-	lightView.translate(-eye);
-
-	// Orthographic projection built like makeFrustumMatrix (same operator()
-	// positions), then transposed like scene._projectionMatrix. halfExtent covers
-	// April's radius plus half the shadow (the frame is centred on their midpoint);
-	// farZ is padded so a long, low shadow isn't clipped in depth.
-	float halfExtent = 120.0f + 0.6f * shadowLen;
-	float nearZ = 1.0f;
-	// Only needs to bracket the caster's depth from the (shadow-offset) eye, not the
-	// whole floor: keeping farZ tight spends the depth precision where it matters.
-	float farZ = dist + shadowLen + 250.0f;
-	Math::Matrix4 lightProj;
-	lightProj(0, 0) = 1.0f / halfExtent;
-	lightProj(1, 1) = 1.0f / halfExtent;
-	lightProj(2, 2) = -2.0f / (farZ - nearZ);
-	lightProj(3, 2) = -(farZ + nearZ) / (farZ - nearZ);
-	lightProj.transpose();
-
-	Math::Matrix4 lightViewProj = lightProj * lightView;
-	Math::Matrix4 lightMVP = lightViewProj * model;
-	lightMVP.transpose();
-
-	_shadowMapShader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
-	_shadowMapShader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
-	_shadowMapShader->enableVertexAttribute("bone1", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 24);
-	_shadowMapShader->enableVertexAttribute("bone2", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 28);
-	_shadowMapShader->enableVertexAttribute("boneWeight", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 32);
-	_shadowMapShader->use(true);
-	_shadowMapShader->setUniform("lightMVP", lightMVP);
-	setBoneRotationArrayUniform(_shadowMapShader, "boneRotation");
-	setBonePositionArrayUniform(_shadowMapShader, "bonePosition");
-
 	Common::Array<Face *> faces = _model->getFaces();
-	for (Common::Array<Face *>::const_iterator face = faces.begin(); face != faces.end(); ++face) {
-		GLuint ebo = _faceEBO[*face];
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-		glDrawElements(GL_TRIANGLES, (*face)->vertexIndices.size(), GL_UNSIGNED_INT, 0);
+
+	int rendered = 0;
+	for (int li = 0; li < count; li++) {
+		int size = _gfx->renderShadowMapBegin(li);
+		if (size == 0) {
+			break; // shadow mapping disabled or FBO unavailable
+		}
+
+		// World-space cast direction for this light (travels along L; z = -1 down).
+		Math::Vector3d L = dirs[li];
+		if (L.getMagnitude() < 0.001f) {
+			L = Math::Vector3d(0.0f, 0.0f, -1.0f);
+		}
+		L.normalize();
+
+		// Frame April AND the shadow she throws under this light, sliding the frame
+		// toward where the shadow falls so the map's resolution is spent on it.
+		float dist = 400.0f;
+		Math::Vector3d center = position;
+		center.z() += 90.0f;
+		Math::Vector2d ground(L.x(), L.y());
+		if (ground.getMagnitude() > 0.0001f) {
+			ground.normalize();
+			center.x() += ground.getX() * shadowLen * 0.5f;
+			center.y() += ground.getY() * shadowLen * 0.5f;
+		}
+		Math::Vector3d eye = center - L * dist;
+		Math::Vector3d up(0.0f, 0.0f, 1.0f);
+		if (ABS(L.z()) > 0.99f) {
+			up = Math::Vector3d(0.0f, 1.0f, 0.0f);
+		}
+
+		Math::Matrix4 lightView = Math::makeLookAtMatrix(eye, center, up);
+		lightView.transpose();
+		lightView.translate(-eye);
+
+		float halfExtent = 120.0f + 0.6f * shadowLen;
+		float nearZ = 1.0f;
+		float farZ = dist + shadowLen + 250.0f;
+		Math::Matrix4 lightProj;
+		lightProj(0, 0) = 1.0f / halfExtent;
+		lightProj(1, 1) = 1.0f / halfExtent;
+		lightProj(2, 2) = -2.0f / (farZ - nearZ);
+		lightProj(3, 2) = -(farZ + nearZ) / (farZ - nearZ);
+		lightProj.transpose();
+
+		Math::Matrix4 lightViewProj = lightProj * lightView;
+		Math::Matrix4 lightMVP = lightViewProj * model;
+		lightMVP.transpose();
+
+		_shadowMapShader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
+		_shadowMapShader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
+		_shadowMapShader->enableVertexAttribute("bone1", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 24);
+		_shadowMapShader->enableVertexAttribute("bone2", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 28);
+		_shadowMapShader->enableVertexAttribute("boneWeight", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 32);
+		_shadowMapShader->use(true);
+		_shadowMapShader->setUniform("lightMVP", lightMVP);
+		setBoneRotationArrayUniform(_shadowMapShader, "boneRotation");
+		setBonePositionArrayUniform(_shadowMapShader, "bonePosition");
+
+		for (Common::Array<Face *>::const_iterator face = faces.begin(); face != faces.end(); ++face) {
+			GLuint ebo = _faceEBO[*face];
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+			glDrawElements(GL_TRIANGLES, (*face)->vertexIndices.size(), GL_UNSIGNED_INT, 0);
+		}
+		_shadowMapShader->unbind();
+
+		// Store the world->light-clip matrix (pre final transpose) + weight.
+		_gfx->renderShadowMapEnd(li, lightViewProj, weights[li]);
+		rendered++;
 	}
-	_shadowMapShader->unbind();
+	_gfx->setShadowMapCount(rendered);
 
-	// Store the world->light-clip matrix (pre final transpose) for receivers.
-	_gfx->renderShadowMapEnd(lightViewProj);
-
-	// Debug: show the shadow map in the screen corner to verify the caster.
+	// Debug: show the first shadow map in the screen corner to verify the caster.
 	if (ConfMan.hasKey("shadow_map_debug") && ConfMan.getBool("shadow_map_debug")) {
 		_gfx->debugDrawShadowMap();
 	}
@@ -524,8 +532,11 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	invProj.inverse();
 	invProj.transpose();
 
-	Math::Matrix4 lightVP = _gfx->getShadowLightViewProj();
-	lightVP.transpose();
+	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
+	lightVP0.transpose();
+	Math::Matrix4 lightVP1 = _gfx->getShadowLightViewProj(1);
+	lightVP1.transpose();
+	int shadowCount = _gfx->getShadowMapCount();
 
 	// First cut: no scene depth-test yet (validate the reconstruction first; the
 	// character may briefly self-shadow until occlusion is added).
@@ -543,13 +554,18 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->enableVertexAttribute("position", _shadowBgVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
 	_shadowBgShader->enableVertexAttribute("texcoord", _shadowBgVBO, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 2 * sizeof(float));
 	_shadowBgShader->use(true);
-	_shadowBgShader->setUniform("shadowTex", 0);
+	_shadowBgShader->setUniform("shadowTex0", 0);
+	_shadowBgShader->setUniform("shadowTex1", 3);
 	_shadowBgShader->setUniform("bgDepthTex", 1);
 	_shadowBgShader->setUniform1f("zMin", _gfx->getWorldDepthZMin());
 	_shadowBgShader->setUniform1f("zMax", _gfx->getWorldDepthZMax());
 	_shadowBgShader->setUniform("projScale", Math::Vector2d(projSX, projSY));
 	_shadowBgShader->setUniform("invView", invView);
-	_shadowBgShader->setUniform("lightVP", lightVP);
+	_shadowBgShader->setUniform("lightVP0", lightVP0);
+	_shadowBgShader->setUniform("lightVP1", lightVP1);
+	_shadowBgShader->setUniform1f("weight0", _gfx->getShadowWeight(0));
+	_shadowBgShader->setUniform1f("weight1", _gfx->getShadowWeight(1));
+	_shadowBgShader->setUniform1f("shadowCount", (float)shadowCount);
 	float alpha = CLIP(ConfMan.hasKey("shadow_map_alpha") ? (int)ConfMan.getInt("shadow_map_alpha") : 55, 0, 100) / 100.0f;
 	_shadowBgShader->setUniform1f("shadowAlpha", alpha);
 	float bias = CLIP(ConfMan.hasKey("shadow_map_bias") ? (int)ConfMan.getInt("shadow_map_bias") : 20, 0, 2000) / 100000.0f;
@@ -568,6 +584,8 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform("invProj", invProj);
 	_shadowBgShader->setUniform1f("useRealDepth", sceneDepthTex != 0 ? 1.0f : 0.0f);
 
+	glActiveTexture(GL_TEXTURE3);
+	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(1));
 	if (sceneDepthTex != 0) {
 		glActiveTexture(GL_TEXTURE2);
 		glBindTexture(GL_TEXTURE_2D, sceneDepthTex);
@@ -575,14 +593,16 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	glActiveTexture(GL_TEXTURE1);
 	_gfx->bindWorldDepth();
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture());
+	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(0));
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE3);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	if (sceneDepthTex != 0) {
 		glActiveTexture(GL_TEXTURE2);
 		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0);
 	}
+	glActiveTexture(GL_TEXTURE0);
 	_shadowBgShader->unbind();
 
 	glDepthMask(GL_TRUE);
@@ -640,8 +660,11 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	modelView.transpose();
 	Math::Matrix4 proj = StarkScene->getProjectionMatrix();
 	proj.transpose();
-	Math::Matrix4 lightVP = _gfx->getShadowLightViewProj();
-	lightVP.transpose();
+	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
+	lightVP0.transpose();
+	Math::Matrix4 lightVP1 = _gfx->getShadowLightViewProj(1);
+	lightVP1.transpose();
+	int shadowCount = _gfx->getShadowMapCount();
 
 	// Depth-test the floor quad against the scene so nearer geometry - furniture,
 	// the character's own body - occludes the shadow instead of it painting over
@@ -661,8 +684,13 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	_shadowRecvShader->use(true);
 	_shadowRecvShader->setUniform("modelViewMatrix", modelView);
 	_shadowRecvShader->setUniform("projectionMatrix", proj);
-	_shadowRecvShader->setUniform("lightVP", lightVP);
-	_shadowRecvShader->setUniform("shadowTex", 0);
+	_shadowRecvShader->setUniform("lightVP0", lightVP0);
+	_shadowRecvShader->setUniform("lightVP1", lightVP1);
+	_shadowRecvShader->setUniform("shadowTex0", 0);
+	_shadowRecvShader->setUniform("shadowTex1", 1);
+	_shadowRecvShader->setUniform1f("weight0", _gfx->getShadowWeight(0));
+	_shadowRecvShader->setUniform1f("weight1", _gfx->getShadowWeight(1));
+	_shadowRecvShader->setUniform1f("shadowCount", (float)shadowCount);
 	float alpha = CLIP(ConfMan.hasKey("shadow_map_alpha") ? (int)ConfMan.getInt("shadow_map_alpha") : 55, 0, 100) / 100.0f;
 	_shadowRecvShader->setUniform1f("shadowAlpha", alpha);
 	float bias = CLIP(ConfMan.hasKey("shadow_map_bias") ? (int)ConfMan.getInt("shadow_map_bias") : 20, 0, 2000) / 100000.0f;
@@ -671,10 +699,15 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	_shadowRecvShader->setUniform1f("shadowSoftness", softness);
 	_shadowRecvShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
 
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(1));
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture());
+	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(0));
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE0);
 	_shadowRecvShader->unbind();
 
 	glDisable(GL_POLYGON_OFFSET_FILL);
@@ -951,6 +984,105 @@ Math::Vector3d OpenGLSActorRenderer::computeShadowLightDirection(const LightEntr
 	}
 
 	return dir;
+}
+
+int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
+		const Math::Vector3d &actorPosition, Math::Vector3d *outDirs, float *outWeights, int maxLights) {
+	maxLights = CLIP(maxLights, 1, (int)OpenGLSDriver::kMaxShadowLights);
+
+	// Collect the strongest 'maxLights' shadow-casting lights, kept in a small
+	// descending-magnitude list. Same overhead + contribution filter as the single
+	// dominant selection, just keeping more than one.
+	float bestMag[OpenGLSDriver::kMaxShadowLights];
+	Math::Vector3d bestDir[OpenGLSDriver::kMaxShadowLights];
+	for (int k = 0; k < maxLights; k++) {
+		bestMag[k] = 0.0f;
+	}
+
+	for (uint i = 1; i < lights.size(); ++i) {   // 0 = ambient, skip
+		LightEntry *light = lights[i];
+
+		bool overhead;
+		if (light->type == LightEntry::kDirectional) {
+			overhead = light->direction.z() < -0.05f;
+		} else {
+			overhead = (light->position.z() - actorPosition.z()) > 0.0f;
+		}
+		if (!overhead) {
+			continue;
+		}
+
+		bool contributes = false;
+		Math::Vector3d lightDirection;
+		switch (light->type) {
+			case LightEntry::kPoint:
+				contributes = getPointLightContribution(light, actorPosition, lightDirection);
+				break;
+			case LightEntry::kDirectional:
+				contributes = getDirectionalLightContribution(light, lightDirection);
+				break;
+			case LightEntry::kSpot:
+				contributes = getSpotLightContribution(light, actorPosition, lightDirection);
+				break;
+			case LightEntry::kAmbient:
+			default:
+				break;
+		}
+		if (!contributes) {
+			continue;
+		}
+
+		float mag = lightDirection.getMagnitude();
+		for (int k = 0; k < maxLights; k++) {
+			if (mag > bestMag[k]) {
+				for (int j = maxLights - 1; j > k; j--) {
+					bestMag[j] = bestMag[j - 1];
+					bestDir[j] = bestDir[j - 1];
+				}
+				bestMag[k] = mag;
+				bestDir[k] = lightDirection;
+				break;
+			}
+		}
+	}
+
+	int found = 0;
+	for (int k = 0; k < maxLights; k++) {
+		if (bestMag[k] > 0.0f) {
+			found = k + 1;
+		}
+	}
+	if (found == 0) {
+		// No overhead caster: a single straight-down shadow (matches the old
+		// fallback) so the character still grounds visually.
+		outDirs[0] = Math::Vector3d(0.0f, 0.0f, -1.0f);
+		outWeights[0] = 1.0f;
+		return 1;
+	}
+
+	// Apply the cast angle (reach) to each and weight by strength relative to the
+	// dominant light: dominant = 1.0, weaker lamps proportionally fainter, so a lone
+	// light casts a full shadow and a rising second light fades in smoothly.
+	float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
+			? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
+	float maxMag = bestMag[0];
+	for (int k = 0; k < found; k++) {
+		Math::Vector3d dir = bestDir[k];
+		Math::Vector2d h(dir.x(), dir.y());
+		if (h.getMagnitude() > 0.0001f) {
+			h.normalize();
+			h *= reach;
+			dir.x() = h.getX();
+			dir.y() = h.getY();
+		} else {
+			dir.x() = 0.0f;
+			dir.y() = 0.0f;
+		}
+		dir.z() = -1.0f;
+		outDirs[k] = dir;
+		outWeights[k] = maxMag > 0.0f ? bestMag[k] / maxMag : 1.0f;
+	}
+	return found;
 }
 
 bool OpenGLSActorRenderer::getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,

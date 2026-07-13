@@ -10,7 +10,6 @@ uniform float zMin;
 uniform float zMax;
 uniform vec2 projScale;   // (proj[0][0], proj[1][1]) - eye-space x/y reconstruction
 uniform mat4 invView;     // eye space -> world space
-uniform mat4 lightVP;     // world -> light clip space
 
 // Real GL depth path: when useRealDepth > 0.5, reconstruct each pixel from the
 // actual depth buffer (which includes depth-stamped props and furniture) via the
@@ -20,7 +19,16 @@ uniform sampler2D sceneDepthTex;
 uniform mat4 invProj;     // clip space -> eye space
 uniform float useRealDepth;
 
-uniform sampler2D shadowTex;  // depth-in-colour shadow map
+// Up to two shadow-casting lights, union-blended by weight (nearby lamps
+// cross-fade instead of the dominant light hard-switching).
+uniform sampler2D shadowTex0; // depth-in-colour shadow map (light 0)
+uniform sampler2D shadowTex1; // depth-in-colour shadow map (light 1)
+uniform mat4 lightVP0;        // world -> light 0 clip space
+uniform mat4 lightVP1;        // world -> light 1 clip space
+uniform float weight0;
+uniform float weight1;
+uniform float shadowCount;    // 1 or 2
+
 uniform float shadowAlpha;
 uniform float shadowBias;
 uniform vec2 shadowTexel;
@@ -34,9 +42,49 @@ float decodeMask(vec2 uv) {
 	return (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
 }
 
-float occluderDepth(vec2 uv) {
-	vec3 c = texture(shadowTex, uv).rgb;   // 24-bit depth packed in RGB
-	return dot(c, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+float decodeDepth(vec4 c) {
+	return dot(c.rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0)); // 24-bit RGB pack
+}
+
+// Shadow factor [0,1] at a world position for one light: PCSS-lite contact
+// hardening (crisp near the caster, softer with distance).
+float shadowFactor(sampler2D tex, mat4 lvp, vec4 world) {
+	vec4 lc = lvp * world;
+	vec3 lndc = lc.xyz / lc.w;
+	vec2 suv = lndc.xy * 0.5 + 0.5;
+	if (suv.x < 0.01 || suv.x > 0.99 || suv.y < 0.01 || suv.y > 0.99) {
+		return 0.0;
+	}
+	float fragDepth = lndc.z * 0.5 + 0.5;
+
+	vec2 searchStep = shadowTexel * shadowSoftness;
+	float blockerSum = 0.0;
+	float blockerCount = 0.0;
+	for (int y = -2; y <= 2; y++) {
+		for (int x = -2; x <= 2; x++) {
+			float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * searchStep));
+			if (fragDepth - shadowBias > od) {
+				blockerSum += od;
+				blockerCount += 1.0;
+			}
+		}
+	}
+	if (blockerCount < 0.5) {
+		return 0.0;
+	}
+	float gap = max(fragDepth - blockerSum / blockerCount, 0.0);
+	float hard = clamp(gap * 8.0, 0.0, 1.0);
+	float penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
+
+	vec2 stepv = shadowTexel * penumbra;
+	float sh = 0.0;
+	for (int y = -2; y <= 2; y++) {
+		for (int x = -2; x <= 2; x++) {
+			float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * stepv));
+			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
+		}
+	}
+	return sh / 25.0;
 }
 
 void main() {
@@ -60,13 +108,10 @@ void main() {
 	}
 
 	vec4 world = invView * vec4(eyePos, 1.0);
-	vec4 lc = lightVP * world;
-	vec3 lndc = lc.xyz / lc.w;
-	vec2 suv = lndc.xy * 0.5 + 0.5;
 
 	// Diagnostic visualizations (opaque, fill the whole screen):
 	//   1 = mask depth (grey), 2 = reconstructed eye x/y, 3 = world x/y, 4 = the
-	//   light-space UV the pixel maps to (should be smooth around the caster).
+	//   light-space UV the pixel maps to (light 0; should be smooth around April).
 	if (bgDebug > 0.5) {
 		if (bgDebug < 1.5) {
 			outColor = vec4(vec3(norm), 1.0);
@@ -75,64 +120,35 @@ void main() {
 		} else if (bgDebug < 3.5) {
 			outColor = vec4(fract(world.x * 0.001), fract(world.y * 0.001), fract(world.z * 0.001), 1.0);
 		} else {
-			outColor = vec4(clamp(suv, 0.0, 1.0), 0.0, 1.0);
+			vec4 lc0 = lightVP0 * world;
+			vec2 suv0 = (lc0.xy / lc0.w) * 0.5 + 0.5;
+			outColor = vec4(clamp(suv0, 0.0, 1.0), 0.0, 1.0);
 		}
 		return;
 	}
 
-	// Outside the shadow map (light frustum) => not shadowed.
-	if (suv.x < 0.01 || suv.x > 0.99 || suv.y < 0.01 || suv.y > 0.99) {
-		discard;
+	// Union blend of the (up to two) lights' shadows, weighted by strength.
+	float visible = 1.0 - shadowFactor(shadowTex0, lightVP0, world) * weight0;
+	if (shadowCount > 1.5) {
+		visible *= 1.0 - shadowFactor(shadowTex1, lightVP1, world) * weight1;
 	}
-	float fragDepth = lndc.z * 0.5 + 0.5;
-
-	// Contact hardening (PCSS-lite): crisp near the caster, softer with distance.
-	vec2 searchStep = shadowTexel * shadowSoftness;
-	float blockerSum = 0.0;
-	float blockerCount = 0.0;
-	for (int y = -2; y <= 2; y++) {
-		for (int x = -2; x <= 2; x++) {
-			float od = occluderDepth(suv + vec2(float(x), float(y)) * searchStep);
-			if (fragDepth - shadowBias > od) {
-				blockerSum += od;
-				blockerCount += 1.0;
-			}
-		}
-	}
-	if (blockerCount < 0.5) {
-		discard;
-	}
-	float gap = max(fragDepth - blockerSum / blockerCount, 0.0);
-	float hard = clamp(gap * 8.0, 0.0, 1.0);
-	float penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
-
-	vec2 stepv = shadowTexel * penumbra;
-	float sh = 0.0;
-	for (int y = -2; y <= 2; y++) {
-		for (int x = -2; x <= 2; x++) {
-			float od = occluderDepth(suv + vec2(float(x), float(y)) * stepv);
-			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
-		}
-	}
-	sh /= 25.0;
-
-	if (sh <= 0.0) {
+	float occ = 1.0 - visible;
+	if (occ <= 0.0) {
 		discard;
 	}
 
 	// Spatial falloff: the screen-space drape would otherwise darken ANY pixel
-	// that lands in the light frustum, including far walls and surfaces BELOW the
+	// that lands in a light frustum, including far walls and surfaces BELOW the
 	// floor that happen to line up behind April. Confine it to her vicinity.
 	//  - horizontal: fade past the shadow's real reach from her feet.
-	//  - vertical: fade out surfaces well below the floor (under-floor leaks); the
-	//    shadow should climb from the floor upward, not spill beneath it.
+	//  - vertical: fade out surfaces well below the floor (under-floor leaks).
 	float horizDist = length(world.xy - actorWorld.xy);
 	float horizFade = 1.0 - smoothstep(shadowReach * 0.75, shadowReach * 1.2, horizDist);
 	float vFade = smoothstep(actorWorld.z - 150.0, actorWorld.z - 30.0, world.z);
-	sh *= horizFade * vFade;
+	occ *= horizFade * vFade;
 
-	if (sh <= 0.0) {
+	if (occ <= 0.0) {
 		discard;
 	}
-	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * sh);
+	outColor = vec4(0.0, 0.0, 0.0, shadowAlpha * occ);
 }
