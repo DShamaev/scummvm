@@ -120,6 +120,10 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// rooms stay at a single shadow and only genuine two-lamp scenes show two. Lower
 	// it to see second shadows more readily; raise it to suppress them.
 	ConfMan.registerDefault("shadow_second_light_min", 50);
+	// Contact hardening (PCSS): shadow crisp at the feet, softening with distance.
+	// Off = a uniform-width penumbra (the simpler, steadier look). A diagnostic +
+	// preference toggle - turn off if the hardening detaches the shadow from the feet.
+	ConfMan.registerDefault("shadow_contact_harden", true);
 	ConfMan.registerDefault("shadow_wall", false);       // drape over walls/furniture (opt-in; needs an accurate depth map)
 	ConfMan.registerDefault("shadow_bg_debug", 0);       // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light UV
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =

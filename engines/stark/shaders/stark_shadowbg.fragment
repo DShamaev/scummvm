@@ -33,6 +33,7 @@ uniform float shadowAlpha;
 uniform float shadowBias;
 uniform vec2 shadowTexel;
 uniform float shadowSoftness;
+uniform float contactHarden;  // 1 = grow penumbra with distance; 0 = uniform width
 uniform float bgDebug;   // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light-space UV
 uniform vec3 actorWorld; // April's feet in world space, for the spatial falloff
 uniform float shadowReach; // max horizontal shadow extent (world units)
@@ -57,34 +58,36 @@ float shadowFactor(sampler2D tex, mat4 lvp, vec4 world) {
 	}
 	float fragDepth = lndc.z * 0.5 + 0.5;
 
-	vec2 searchStep = shadowTexel * shadowSoftness;
-	float blockerSum = 0.0;
-	float blockerCount = 0.0;
-	for (int y = -2; y <= 2; y++) {
-		for (int x = -2; x <= 2; x++) {
-			float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * searchStep));
-			if (fragDepth - shadowBias > od) {
-				blockerSum += od;
-				blockerCount += 1.0;
+	float penumbra = shadowSoftness;
+	if (contactHarden > 0.5) {
+		vec2 searchStep = shadowTexel * shadowSoftness * 2.0;
+		float blockerSum = 0.0;
+		float blockerCount = 0.0;
+		for (int y = -2; y <= 2; y++) {
+			for (int x = -2; x <= 2; x++) {
+				float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * searchStep));
+				if (fragDepth - shadowBias > od) {
+					blockerSum += od;
+					blockerCount += 1.0;
+				}
 			}
 		}
+		if (blockerCount > 0.5) {
+			float gap = max(fragDepth - blockerSum / blockerCount, 0.0);
+			float hard = clamp(gap * 8.0, 0.0, 1.0);
+			penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
+		}
 	}
-	if (blockerCount < 0.5) {
-		return 0.0;
-	}
-	float gap = max(fragDepth - blockerSum / blockerCount, 0.0);
-	float hard = clamp(gap * 8.0, 0.0, 1.0);
-	float penumbra = mix(shadowSoftness * 0.6, shadowSoftness * 1.9, hard);
 
 	vec2 stepv = shadowTexel * penumbra;
 	float sh = 0.0;
-	for (int y = -2; y <= 2; y++) {
-		for (int x = -2; x <= 2; x++) {
+	for (int y = -3; y <= 3; y++) {
+		for (int x = -3; x <= 3; x++) {
 			float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * stepv));
 			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
 		}
 	}
-	return sh / 25.0;
+	return sh / 49.0;
 }
 
 void main() {

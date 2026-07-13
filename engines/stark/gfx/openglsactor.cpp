@@ -572,6 +572,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform1f("shadowBias", bias);
 	float soft = CLIP(ConfMan.hasKey("shadow_map_softness") ? (int)ConfMan.getInt("shadow_map_softness") : 2, 1, 40);
 	_shadowBgShader->setUniform1f("shadowSoftness", soft);
+	_shadowBgShader->setUniform1f("contactHarden", ConfMan.getBool("shadow_contact_harden") ? 1.0f : 0.0f);
 	_shadowBgShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
 	_shadowBgShader->setUniform1f("bgDebug", (float)bgDebug);
 	// Spatial falloff around April's feet: keeps the drape on nearby walls/furniture
@@ -699,6 +700,7 @@ void OpenGLSActorRenderer::renderShadowReceive(const Math::Vector3d &position) {
 	_shadowRecvShader->setUniform1f("shadowBias", bias);
 	float softness = CLIP(ConfMan.hasKey("shadow_map_softness") ? (int)ConfMan.getInt("shadow_map_softness") : 3, 1, 40);
 	_shadowRecvShader->setUniform1f("shadowSoftness", softness);
+	_shadowRecvShader->setUniform1f("contactHarden", ConfMan.getBool("shadow_contact_harden") ? 1.0f : 0.0f);
 	_shadowRecvShader->setUniform("shadowTexel", Math::Vector2d(1.0f / 1024.0f, 1.0f / 1024.0f));
 
 	glActiveTexture(GL_TEXTURE1);
