@@ -527,12 +527,10 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	invView.inverse();
 	invView.transpose();
 
-	// Depth linearization terms for the real-depth path: eyeZ = B / (ndcZ + A).
-	// makeFrustumMatrix puts A at (2,2) and B at (3,2), but scene.cpp stores the
-	// projection TRANSPOSED, so in what getProjectionMatrix() returns B is at
-	// (2,3) - (3,2) there is the -1 w-term. Reusing the mask path's x/y
-	// reconstruction is far more robust than inverting the frustum.
-	Math::Vector2d projDepth(projection(2, 2), projection(2, 3));
+	// Near/far clip planes for the real-depth linearization (unambiguous; avoids
+	// the frustum matrix's transposed-storage element confusion).
+	float nearClip = StarkScene->getNearClipPlane();
+	float farClip = StarkScene->getFarClipPlane();
 
 	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
 	lightVP0.transpose();
@@ -584,7 +582,8 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform1f("shadowReach", 150.0f * reach);
 	// Real-depth reconstruction (props included) when the depth copy succeeded.
 	_shadowBgShader->setUniform("sceneDepthTex", 2);
-	_shadowBgShader->setUniform("projDepth", projDepth);
+	_shadowBgShader->setUniform1f("nearClip", nearClip);
+	_shadowBgShader->setUniform1f("farClip", farClip);
 	_shadowBgShader->setUniform1f("useRealDepth", sceneDepthTex != 0 ? 1.0f : 0.0f);
 
 	glActiveTexture(GL_TEXTURE3);
@@ -1137,7 +1136,30 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 			info += Common::String::format("[%d] w=%.2f dir=(%.2f,%.2f,%.2f) ",
 					k, outWeights[k], outDirs[k].x(), outDirs[k].y(), outDirs[k].z());
 		}
-		warning("Stark shadowLights: kept=%d of wanted=%d | %s", found, maxLights, info.c_str());
+		// Also dump EVERY light and why it did / didn't qualify, so a room that only
+		// shows one shadow reveals whether the 2nd light was filtered as not-overhead,
+		// non-contributing, or simply weaker.
+		Common::String all;
+		for (uint i = 0; i < lights.size(); ++i) {
+			LightEntry *lt = lights[i];
+			bool oh;
+			if (lt->type == LightEntry::kDirectional) {
+				oh = lt->direction.z() < -0.05f;
+			} else {
+				oh = (lt->position.z() - actorPosition.z()) > 0.0f;
+			}
+			Math::Vector3d ld;
+			bool contrib = false;
+			switch (lt->type) {
+				case LightEntry::kPoint: contrib = getPointLightContribution(lt, actorPosition, ld); break;
+				case LightEntry::kDirectional: contrib = getDirectionalLightContribution(lt, ld); break;
+				case LightEntry::kSpot: contrib = getSpotLightContribution(lt, actorPosition, ld); break;
+				default: break;
+			}
+			all += Common::String::format("{%u type=%d overhead=%d contrib=%d mag=%.2f} ",
+					i, (int)lt->type, oh ? 1 : 0, contrib ? 1 : 0, contrib ? ld.getMagnitude() : 0.0f);
+		}
+		warning("Stark shadowLights: kept=%d of wanted=%d | %s|| lights: %s", found, maxLights, info.c_str(), all.c_str());
 		ConfMan.setInt("shadow_debug_log", 0);
 	}
 	return found;
