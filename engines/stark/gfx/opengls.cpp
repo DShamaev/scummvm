@@ -466,7 +466,23 @@ void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, i
 	// depth, so keep the largest-area surface, not the last one drawn - otherwise
 	// a prop's small depth map overwrites the background's and SSAO/DoF/the shadow
 	// drape sample the wrong depth as the character moves between props.
-	if (area < _worldDepthArea) {
+	bool accepted = area >= _worldDepthArea;
+
+	// Diagnostic (setInt depth_mask_log 1 = one frame; 2 = keep logging): every
+	// depth-mapped surface offering itself as the world depth, and which wins.
+	// Scrolling locations have several parallax layers, so the largest-area rule can
+	// crown the wrong one and the mask then flips as the character moves.
+	if (ConfMan.hasKey("depth_mask_log") && ConfMan.getInt("depth_mask_log") > 0) {
+		float sx = ABS(uvScale.getX()) > 0.0001f ? 1.0f / uvScale.getX() : 0.0f;
+		float sy = ABS(uvScale.getY()) > 0.0001f ? 1.0f / uvScale.getY() : 0.0f;
+		warning("Stark worldDepth cand: tex=%p area=%d normSize=(%.3f,%.3f) normOff=(%.3f,%.3f) "
+		        "z=[%.1f..%.1f] accepted=%d (prevBest=%d)",
+		        (const void *)depth, area, sx, sy,
+		        -uvOffset.getX() * sx, -uvOffset.getY() * sy,
+		        zMin, zMax, accepted ? 1 : 0, _worldDepthArea);
+	}
+
+	if (!accepted) {
 		return;
 	}
 	_worldDepthArea = area;
@@ -586,6 +602,11 @@ Common::String OpenGLSDriver::testFramebuffer() {
 }
 
 void OpenGLSDriver::flipBuffer() {
+	// depth_mask_log 1 = dump one frame's worth of world-depth candidates, then
+	// switch itself off here (end of frame) so it doesn't spam. 2 = keep logging.
+	if (ConfMan.hasKey("depth_mask_log") && ConfMan.getInt("depth_mask_log") == 1) {
+		ConfMan.setInt("depth_mask_log", 0);
+	}
 	g_system->updateScreen();
 }
 

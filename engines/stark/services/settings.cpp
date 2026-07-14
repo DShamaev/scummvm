@@ -135,6 +135,9 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// unprojection is correct, colour = it is wrong).
 	ConfMan.registerDefault("shadow_bg_debug", 0);
 	ConfMan.registerDefault("shadow_bg_log", 0);         // 1 = log one drape state line, then self-resets
+	// 1 = dump one frame of world-depth-mask candidates (which surfaces offer a depth
+	// map and which wins), then self-resets; 2 = keep logging every frame.
+	ConfMan.registerDefault("depth_mask_log", 0);
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
 	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
 	// safe kill switch. Also sharpens the detail magnifier.
