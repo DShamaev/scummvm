@@ -184,6 +184,15 @@ void VisualImageXMG::renderScaledToSize(const Common::Point &position, uint widt
 	_surfaceRenderer->render(_bitmap, position, width, height);
 }
 
+void VisualImageXMG::renderDepthOnly(const Common::Point &position, bool useOffset) {
+	// Same draw as render(), but colour-masked and opaque-only: it exists purely to
+	// put this image's per-pixel depth into the buffer before the actors render.
+	Common::Point drawPos = useOffset ? position - _hotspot : position;
+	_surfaceRenderer->setDepthOnly(true);
+	_surfaceRenderer->render(_bitmap, drawPos, _originalWidth, _originalHeight);
+	_surfaceRenderer->setDepthOnly(false);
+}
+
 void VisualImageXMG::stampDepth(const Common::Point &position, bool useOffset, float eyeDepth) {
 	Common::Point drawPos = useOffset ? position - _hotspot : position;
 	_surfaceRenderer->stampDepthPlane(_bitmap, drawPos, _originalWidth, _originalHeight, eyeDepth);

@@ -191,11 +191,30 @@ void GameWindow::onRender() {
 		StarkScene->setFocusDepth(eye.length());
 	}
 
-	// Render all the scene items
+	// Render all the scene items. Entries are ordered back-to-front, so the first
+	// one is the location background.
 	Gfx::RenderEntryArray::iterator element = _renderEntries.begin();
+	bool backgroundDrawn = false;
 	while (element != _renderEntries.end()) {
 		// Draw the current element
 		(*element)->render(lightEntries);
+
+		// Depth pre-pass, run once right after the background: give every prop its
+		// depth BEFORE any actor draws. The character's shadow drape runs mid
+		// actor-draw, so props standing nearer than her - which are drawn after her -
+		// had no depth yet and could never catch her shadow (in April's room the desk
+		// at 539 did, the chair at 490 and shelf at 487 did not).
+		//
+		// It must follow the background: the background is farther than the props, so
+		// pre-stamped prop depth would fail its LEQUAL test and punch holes. Only
+		// near-opaque pixels stamp, and those are exactly the pixels each prop repaints
+		// opaquely later, so the result stays visually identical to before.
+		if (!backgroundDrawn && ConfMan.getBool("enable_sprite_depth")) {
+			backgroundDrawn = true;
+			for (Gfx::RenderEntryArray::iterator p = element + 1; p != _renderEntries.end(); p++) {
+				(*p)->prepassDepth();
+			}
+		}
 
 		// Go for the next one
 		element++;

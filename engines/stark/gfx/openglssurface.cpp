@@ -62,6 +62,18 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 
 	bool depthMapsOn = StarkSettings->getBoolSetting(Settings::kDepthMaps);
 	bool useDepth = _depthBitmap != nullptr && depthMapsOn;
+
+	// Depth-only pre-pass: write this surface's depth WITHOUT touching colour, so
+	// props that draw after the character (because they stand nearer than her) are
+	// already in the depth buffer when her shadow drape runs mid-draw. Only
+	// near-opaque pixels stamp, so a soft edge can't depth-reject her behind it.
+	if (_depthOnly) {
+		if (!useDepth && !(_flatDepth > 0.0f && depthMapsOn)) {
+			_gfx->end2DMode();   // nothing to contribute; start2DMode already ran
+			return;
+		}
+		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	}
 	// Flat occlusion: no per-pixel depth map, but a plane depth was set for this
 	// sprite (a floor-positioned foreground image) and per-pixel sprite occlusion
 	// is enabled. Draw with the depth shader in flat mode so 3D items are occluded
@@ -154,6 +166,12 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		glDepthMask(GL_TRUE);
 	}
 
+	// Only near-opaque pixels stamp depth during the pre-pass (see alphaCutoff in
+	// stark_surface_depth.fragment); the normal draw keeps its ~0 cutoff.
+	if (useDepth || useFlat) {
+		shader->setUniform1f("alphaCutoff", _depthOnly ? 0.9f : 0.0f);
+	}
+
 	bitmap->bind();
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -161,6 +179,9 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		glDepthFunc(GL_LESS);
 		glDepthMask(GL_FALSE);
 		glDisable(GL_DEPTH_TEST);
+	}
+	if (_depthOnly) {
+		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	}
 
 	shader->unbind();

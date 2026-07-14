@@ -27,6 +27,12 @@ uniform float depthBias;
 uniform UBOOL flatDepth;
 uniform float flatDepthEye;
 
+// Alpha below which a pixel stamps no depth. Normally ~0 (any visible pixel owns
+// its depth), but the depth PRE-pass raises it so only near-opaque pixels write
+// depth: a semi-transparent pixel would otherwise depth-reject the character
+// behind it and show background through her.
+uniform float alphaCutoff;
+
 float depthAt(vec2 uv) {
 	vec4 depthSample = texture(depthTex, uv);
 	float depthNorm = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
@@ -37,8 +43,9 @@ void main() {
 	vec2 uv = Texcoord;
 	vec4 texColor = texture(tex, uv);
 
-	// Fully transparent overlay pixels must not stamp the depth buffer
-	if (texColor.a < 0.004) {
+	// Fully transparent overlay pixels must not stamp the depth buffer. The depth
+	// pre-pass raises alphaCutoff so only near-opaque pixels do.
+	if (texColor.a < max(0.004, alphaCutoff)) {
 		discard;
 	}
 

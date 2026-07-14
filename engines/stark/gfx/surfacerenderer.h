@@ -113,6 +113,14 @@ public:
 	 */
 	void setFlatDepth(float eyeDepth) { _flatDepth = eyeDepth; }
 
+	/**
+	 * Depth-only pre-pass: write this surface's depth without touching colour, and
+	 * only from near-opaque pixels. Props nearer than the character are drawn AFTER
+	 * her, so without this their depth doesn't exist yet when her shadow drape runs
+	 * mid-draw and no shadow can land on them.
+	 */
+	void setDepthOnly(bool depthOnly) { _depthOnly = depthOnly; }
+
 protected:
 	bool _noScalingOverride;
 	float _fadeLevel;
@@ -125,6 +133,7 @@ protected:
 	float _depthZMax;
 	float _depthBias;
 	float _flatDepth;
+	bool _depthOnly;
 };
 
 } // End of namespace Gfx

@@ -78,6 +78,13 @@ public:
 	 * them apart from the background. No-op for actors, props, un-positioned
 	 * images, and images that already carry a depth map.
 	 */
+	/**
+	 * Contribute this entry's depth ahead of the actors, so the character's shadow
+	 * drape (which runs mid actor-draw) sees props that stand NEARER than her and
+	 * are therefore drawn after her. Depth-mapped props draw their real per-pixel
+	 * depth colour-masked; the rest stamp their flat floor plane.
+	 */
+	void prepassDepth();
 	void stampDepth();
 
 	/**

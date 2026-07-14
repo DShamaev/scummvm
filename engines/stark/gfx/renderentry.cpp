@@ -121,6 +121,28 @@ float RenderEntry::imageEyeDepth(VisualImageXMG *image) const {
 	return eye > 0.0f ? eye : 0.0f;
 }
 
+void RenderEntry::prepassDepth() {
+	if (!_visual) {
+		return;
+	}
+	VisualImageXMG *image = _visual->get<VisualImageXMG>();
+	if (!image) {
+		return;   // actors write their own real depth when they draw
+	}
+
+	if (image->hasDepthMap()) {
+		// Per-pixel depth from the prop's depth map, ahead of the actors.
+		image->renderDepthOnly(_position, true);
+		return;
+	}
+
+	// No depth map: the flat floor-distance plane (same rule as stampDepth).
+	float eye = imageEyeDepth(image);
+	if (eye > 0.0f) {
+		image->stampDepth(_position, true, eye);
+	}
+}
+
 void RenderEntry::stampDepth() {
 	if (!_visual) {
 		return;

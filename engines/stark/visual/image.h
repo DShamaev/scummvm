@@ -83,6 +83,8 @@ public:
 	 * buffer (no colour), so a floor-positioned sprite without a depth map still
 	 * occupies the depth buffer for the post-processing pass.
 	 */
+	/** Colour-masked, opaque-only draw that only contributes per-pixel depth. */
+	void renderDepthOnly(const Common::Point &position, bool useOffset);
 	void stampDepth(const Common::Point &position, bool useOffset, float eyeDepth);
 
 	/**
