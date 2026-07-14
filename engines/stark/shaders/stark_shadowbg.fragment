@@ -83,7 +83,7 @@ float shadowFactor(sampler2D tex, mat4 lvp, vec4 world) {
 		for (int y = -2; y <= 2; y++) {
 			for (int x = -2; x <= 2; x++) {
 				float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * searchStep));
-				if (fragDepth - shadowBias > od) {
+				if (od < 0.999 && fragDepth - shadowBias > od) {
 					blockerSum += od;
 					blockerCount += 1.0;
 				}
@@ -96,12 +96,16 @@ float shadowFactor(sampler2D tex, mat4 lvp, vec4 world) {
 		}
 	}
 
+	// od >= 0.999 means the texel holds no caster (the map is cleared to ~1.004 =
+	// beyond far). Without this test, ground past the light's far plane has
+	// fragDepth > 1 and so "beats" those empty texels - shadowing wide-open floor
+	// out to wherever the falloff clips it, which reads as a circle around April.
 	vec2 stepv = shadowTexel * penumbra;
 	float sh = 0.0;
 	for (int y = -3; y <= 3; y++) {
 		for (int x = -3; x <= 3; x++) {
 			float od = decodeDepth(texture(tex, suv + vec2(float(x), float(y)) * stepv));
-			sh += (fragDepth - shadowBias > od) ? 1.0 : 0.0;
+			sh += (od < 0.999 && fragDepth - shadowBias > od) ? 1.0 : 0.0;
 		}
 	}
 	return sh / 49.0;
