@@ -120,6 +120,11 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// smoothly (no pop) so two lamps cross-fade as the character moves between them.
 	// Lower it to see second shadows more readily; raise it to suppress them.
 	ConfMan.registerDefault("shadow_second_light_min", 60);
+	// How far a light casts shadows, as a percentage of its lighting falloff. Game
+	// lights have tight falloffs, so at 100 only one lamp is ever in range and the
+	// shadow switches between lamps; reaching further lets two overlap and their
+	// shadows cross-fade (a lamp still throws a shadow past where it visibly lights).
+	ConfMan.registerDefault("shadow_light_range", 250);
 	// Contact hardening (PCSS): shadow crisp at the feet, softening with distance.
 	// Off = a uniform-width penumbra (the simpler, steadier look). A diagnostic +
 	// preference toggle - turn off if the hardening detaches the shadow from the feet.

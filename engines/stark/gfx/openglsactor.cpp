@@ -1026,6 +1026,14 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		bestMag[k] = 0.0f;
 	}
 
+	// Shadow-casting reach, as a multiple of each light's lighting falloff. Game
+	// lights have tight falloffs, so at their lighting range only ONE lamp is ever
+	// live and the shadow switches between lamps as the character walks. A lamp or
+	// window still throws a shadow past where it stops measurably lighting her, so
+	// reaching further lets two lamps overlap and their shadows cross-fade.
+	float rangeScale = CLIP(ConfMan.hasKey("shadow_light_range")
+			? (int)ConfMan.getInt("shadow_light_range") : 250, 100, 1000) / 100.0f;
+
 	for (uint i = 1; i < lights.size(); ++i) {   // 0 = ambient, skip
 		LightEntry *light = lights[i];
 
@@ -1039,23 +1047,8 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 			continue;
 		}
 
-		bool contributes = false;
 		Math::Vector3d lightDirection;
-		switch (light->type) {
-			case LightEntry::kPoint:
-				contributes = getPointLightContribution(light, actorPosition, lightDirection);
-				break;
-			case LightEntry::kDirectional:
-				contributes = getDirectionalLightContribution(light, lightDirection);
-				break;
-			case LightEntry::kSpot:
-				contributes = getSpotLightContribution(light, actorPosition, lightDirection);
-				break;
-			case LightEntry::kAmbient:
-			default:
-				break;
-		}
-		if (!contributes) {
+		if (!getShadowLightContribution(light, actorPosition, lightDirection, rangeScale)) {
 			continue;
 		}
 
@@ -1170,21 +1163,51 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 			} else {
 				oh = (lt->position.z() - actorPosition.z()) > 0.0f;
 			}
-			Math::Vector3d ld;
-			bool contrib = false;
-			switch (lt->type) {
-				case LightEntry::kPoint: contrib = getPointLightContribution(lt, actorPosition, ld); break;
-				case LightEntry::kDirectional: contrib = getDirectionalLightContribution(lt, ld); break;
-				case LightEntry::kSpot: contrib = getSpotLightContribution(lt, actorPosition, ld); break;
-				default: break;
-			}
-			all += Common::String::format("{%u type=%d overhead=%d contrib=%d mag=%.2f} ",
-					i, (int)lt->type, oh ? 1 : 0, contrib ? 1 : 0, contrib ? ld.getMagnitude() : 0.0f);
+			Math::Vector3d ld, ldLit;
+			bool contrib = getShadowLightContribution(lt, actorPosition, ld, rangeScale);
+			// Also report the unextended (lighting) reach, so we can see whether the
+			// extended range is what brought a light in.
+			bool lit = getShadowLightContribution(lt, actorPosition, ldLit, 1.0f);
+			float dist = (lt->type == LightEntry::kDirectional)
+					? 0.0f : lt->position.getDistanceTo(actorPosition);
+			all += Common::String::format("{%u type=%d overhead=%d lit=%d shadow=%d mag=%.2f dist=%.0f far=%.0f} ",
+					i, (int)lt->type, oh ? 1 : 0, lit ? 1 : 0, contrib ? 1 : 0,
+					contrib ? ld.getMagnitude() : 0.0f, dist, lt->falloffFar);
 		}
 		warning("Stark shadowLights: kept=%d of wanted=%d | %s|| lights: %s", found, maxLights, info.c_str(), all.c_str());
 		ConfMan.setInt("shadow_debug_log", 0);
 	}
 	return found;
+}
+
+bool OpenGLSActorRenderer::getShadowLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
+                                                      Math::Vector3d &direction, float rangeScale) {
+	// Widen the light's distance falloff for the duration of this query and reuse
+	// the normal contribution logic, so cone / brightness / falloff-ramp behaviour
+	// stays identical to lighting - only the reach changes. The ramp then fades the
+	// shadow out gracefully over the extended range instead of cutting hard.
+	// Directional lights have no distance falloff and are unaffected.
+	float savedFar = light->falloffFar;
+	light->falloffFar = savedFar * rangeScale;
+
+	bool ok = false;
+	switch (light->type) {
+		case LightEntry::kPoint:
+			ok = getPointLightContribution(light, actorPosition, direction);
+			break;
+		case LightEntry::kDirectional:
+			ok = getDirectionalLightContribution(light, direction);
+			break;
+		case LightEntry::kSpot:
+			ok = getSpotLightContribution(light, actorPosition, direction);
+			break;
+		case LightEntry::kAmbient:
+		default:
+			break;
+	}
+
+	light->falloffFar = savedFar;
+	return ok;
 }
 
 bool OpenGLSActorRenderer::getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,

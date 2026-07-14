@@ -100,6 +100,14 @@ protected:
 	// when two lights are near-equal.
 	int _shadowDominantIdx;
 
+	// Shadow-casting contribution: the normal lighting contribution but with the
+	// light's distance falloff widened by rangeScale, so a lamp still throws a
+	// (fainter) shadow beyond where it stops measurably lighting the actor. Game
+	// lights use tight falloffs, so without this only ONE light is ever in range at
+	// a time and shadows switch instead of cross-fading between lamps.
+	bool getShadowLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
+			Math::Vector3d &direction, float rangeScale);
+
 	bool getPointLightContribution(LightEntry *light, const Math::Vector3d &actorPosition,
 			Math::Vector3d &direction, float weight = 1.0f);
 	bool getDirectionalLightContribution(LightEntry *light, Math::Vector3d &direction);
