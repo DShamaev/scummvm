@@ -1153,10 +1153,19 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		}
 	}
 
-	// One-shot diagnostic (setInt shadow_debug_log 1): how many shadow lights were
-	// kept and their weights, so a scene showing only one shadow can be understood
-	// (the 2nd was too weak or too aligned with the 1st, or there is only one).
-	if (ConfMan.hasKey("shadow_debug_log") && ConfMan.getInt("shadow_debug_log") > 0) {
+	// Diagnostic: which shadow lights were kept and with what weights.
+	//   shadow_debug_log 1 = log once, then self-reset.
+	//   shadow_debug_log 2 = keep logging (throttled), for scenes where the shadow
+	//                        flickers or the selection changes as the actor moves -
+	//                        a single snapshot can't show that.
+	int dbgLog = ConfMan.hasKey("shadow_debug_log") ? (int)ConfMan.getInt("shadow_debug_log") : 0;
+	static int s_shadowLogTick = 0;
+	bool doLog = (dbgLog == 1);
+	if (dbgLog >= 2) {
+		doLog = (s_shadowLogTick % 20) == 0;   // throttle: ~every 20 frames
+		s_shadowLogTick++;
+	}
+	if (doLog) {
 		Common::String info;
 		for (int k = 0; k < found; k++) {
 			info += Common::String::format("[%d] w=%.2f dir=(%.2f,%.2f,%.2f) ",
@@ -1185,8 +1194,12 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 					i, (int)lt->type, oh ? 1 : 0, lit ? 1 : 0, contrib ? 1 : 0,
 					contrib ? ld.getMagnitude() : 0.0f, dist, lt->falloffFar);
 		}
-		warning("Stark shadowLights: kept=%d of wanted=%d | %s|| lights: %s", found, maxLights, info.c_str(), all.c_str());
-		ConfMan.setInt("shadow_debug_log", 0);
+		warning("Stark shadowLights: actorPos=(%.0f,%.0f,%.0f) kept=%d of wanted=%d range=%.2f | %s|| lights: %s",
+				actorPosition.x(), actorPosition.y(), actorPosition.z(),
+				found, maxLights, rangeScale, info.c_str(), all.c_str());
+		if (dbgLog == 1) {
+			ConfMan.setInt("shadow_debug_log", 0);
+		}
 	}
 	return found;
 }
