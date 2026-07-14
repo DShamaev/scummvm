@@ -140,6 +140,22 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	// main shader setup below is unaffected. No-op when disabled.
 	renderShadowMap(model, position, lights);
 
+	// Cast the shadow onto the scene BEFORE drawing the actor. The wall drape is a
+	// fullscreen pass that reconstructs the depth buffer, so if the actor were
+	// already drawn it would reconstruct HER surface, find her own back faces behind
+	// the shadow map's front faces, and darken her - double-dimming the character on
+	// top of her normal lighting. Casting first means the depth holds only the
+	// background/props, and she then draws opaquely over her own shadow.
+	bool forceShadowsEarly = ConfMan.hasKey("force_shadows") && ConfMan.getBool("force_shadows");
+	bool wantShadow = (_castsShadow || forceShadowsEarly) &&
+	                  (StarkScene->shouldRenderShadows() || forceShadowsEarly) &&
+	                  StarkSettings->getBoolSetting(Settings::kShadow);
+	bool didShadowMap = false;
+	if (wantShadow && ConfMan.getBool("enable_shadow_mapping") && _gfx->isShadowMapValid()) {
+		renderShadowReceive(position);
+		didShadowMap = true;
+	}
+
 	_shader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
 	_shader->enableVertexAttribute("position2", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 12);
 	_shader->enableVertexAttribute("bone1", _faceVBO, 1, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 24);
@@ -266,17 +282,9 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	// castsShadow / shouldRenderShadows. force_shadows overrides both so the
 	// character still casts one - at the risk of artifacts where the scene
 	// wasn't staged with a floor at y=0.
-	bool forceShadows = ConfMan.hasKey("force_shadows") && ConfMan.getBool("force_shadows");
-	if ((_castsShadow || forceShadows) &&
-	    (StarkScene->shouldRenderShadows() || forceShadows) &&
-	    StarkSettings->getBoolSetting(Settings::kShadow)) {
-
-		// Shadow mapping: cast the shadow by sampling the shadow map on a ground
-		// quad, instead of the jittered silhouette projection. Skips the rest.
-		if (ConfMan.getBool("enable_shadow_mapping") && _gfx->isShadowMapValid()) {
-			renderShadowReceive(position);
-			return;
-		}
+	// The shadow-map path already cast its shadow BEFORE this draw (so the actor
+	// isn't darkened by her own shadow); only the legacy jittered path runs here.
+	if (wantShadow && !didShadowMap) {
 
 		glEnable(GL_BLEND);
 		glEnable(GL_STENCIL_TEST);
