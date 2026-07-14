@@ -106,11 +106,24 @@ void main() {
 	vec3 eyePos = vec3(0.0);   // only used by debug view 2 (mask path)
 	vec4 world;
 	if (useRealDepth > 0.5) {
-		// Real depth (props included): unproject NDC + window depth straight to
-		// world with the engine's inverse(projection*view). Exact, skew-correct.
+		// The background's GL depth is deliberately pushed AWAY from the camera by
+		// depth_bias (see stark_surface_depth.fragment) so depth-estimation noise
+		// can't occlude the character. For background pixels the raw depth therefore
+		// reads ~depth_bias * range too far - which displaced the whole drape. The
+		// mask carries the truthful, unbiased background depth, while props and the
+		// character are stamped WITHOUT that bias and sit nearer. So take whichever
+		// is nearer: the mask wins on background (undoing the bias), the real depth
+		// wins wherever something is genuinely in front of it (props, furniture).
 		float d = texture(sceneDepthTex, vUV).r;
-		vec4 clip = vec4(ndc, d * 2.0 - 1.0, 1.0);
-		vec4 wh = invViewProj * clip;
+		float nz = d * 2.0 - 1.0;
+		float eyeZreal = (2.0 * nearClip * farClip) / (farClip + nearClip - nz * (farClip - nearClip));
+		float eyeZmask = mix(zMin, zMax, norm);
+		float eyeZ = min(eyeZreal, eyeZmask);
+
+		// Back to NDC z, then unproject with the engine matrix (verified exact by
+		// debug view 7), which is skew-correct for scrolled locations.
+		float ndcZ = (farClip + nearClip - 2.0 * farClip * nearClip / eyeZ) / (farClip - nearClip);
+		vec4 wh = invViewProj * vec4(ndc, ndcZ, 1.0);
 		world = wh / wh.w;
 	} else {
 		// Background-mask path: eye z from the calibrated mask, x/y from NDC.
