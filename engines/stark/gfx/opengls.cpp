@@ -399,6 +399,9 @@ void OpenGLSDriver::buildSSAO(int vw, int vh, float radius, float dynamicOnly) {
 	_ssaoShader->setUniform1f("depthMode", useGLDepth ? 1.0f : 0.0f);
 	_ssaoShader->setUniform1f("depthNear", StarkScene->getNearClipPlane());
 	_ssaoShader->setUniform1f("depthFar", StarkScene->getFarClipPlane());
+	// Scroll/flip remap for the background mask (see maskUv in the shader).
+	_ssaoShader->setUniform("maskScale", _worldDepthUvScale);
+	_ssaoShader->setUniform("maskOffset", _worldDepthUvOffset);
 	_ssaoShader->setUniform1f("depthZMin", _worldDepthZMin);
 	_ssaoShader->setUniform1f("depthZMax", _worldDepthZMax);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -965,6 +968,11 @@ void OpenGLSDriver::applyPostProcess() {
 	// - the latter are already shaded in the pre-rendered art and must not halo.
 	if (wantDepth) {
 		bool dynamicMask = false;
+
+		// Scroll/flip remap for the background mask (see maskUv in the shader): in
+		// scrolling locations it is drawn wider than the viewport at an offset.
+		_postShader->setUniform("maskScale", _worldDepthUvScale);
+		_postShader->setUniform("maskOffset", _worldDepthUvOffset);
 
 		glActiveTexture(GL_TEXTURE1);
 		if (useGLDepth && _postDepthCopyTex) {

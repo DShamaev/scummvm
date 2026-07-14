@@ -29,6 +29,20 @@ uniform sampler2D bgDepthTex;
 uniform float ssaoDynamicOnly;  // 1 = contact mode (character/background separated)
 uniform float debugView;        // 0 = off; 1 = GL depth, 2 = dynamic mask, 3 = bg mask
 
+// Viewport UV -> background-mask UV. The mask is a top-origin loaded texture,
+// whereas sceneTex / depthTex are copied from the bottom-origin framebuffer, so V
+// is flipped to line the two depth sources up at the same screen point. In
+// scrolling locations the background is additionally drawn WIDER than the viewport
+// at a scrolled offset, so scale/offset remap onto the visible part - without them
+// the mask is read from the wrong place and slides as the camera scrolls.
+// Identity (1,1)/(0,0) for an ordinary full-screen background.
+uniform vec2 maskScale;
+uniform vec2 maskOffset;
+
+vec2 maskUv(vec2 uv) {
+	return vec2(uv.x, 1.0 - uv.y) * maskScale + maskOffset;
+}
+
 float sceneDepth(vec2 uv) {
 	if (depthMode > 0.5) {
 		// Real GL depth buffer: window depth [0,1] -> eye-space distance.
@@ -36,18 +50,16 @@ float sceneDepth(vec2 uv) {
 		float ndc = w * 2.0 - 1.0;
 		return (2.0 * depthNear * depthFar) / (depthFar + depthNear - ndc * (depthFar - depthNear));
 	}
-	// Background depth mask: 16-bit R(high)/G(low) packed eye-space depth.
-	vec4 d = texture(depthTex, uv);
+	// Background depth mask: 16-bit R(high)/G(low) packed eye-space depth. In this
+	// mode depthTex IS the mask, so it needs the same flip/scroll remap as bgDepth.
+	vec4 d = texture(depthTex, maskUv(uv));
 	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
 	return mix(depthZMin, depthZMax, norm);
 }
 
 // Eye-space depth of the baked background at uv (the character is never in it).
-// The mask is a top-origin loaded texture, whereas sceneTex / depthTex are copied
-// from the bottom-origin framebuffer, so its V must be flipped to line the two
-// depth sources up at the same screen point.
 float bgDepth(vec2 uv) {
-	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y));
+	vec4 d = texture(bgDepthTex, maskUv(uv));
 	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
 	return mix(depthZMin, depthZMax, norm);
 }

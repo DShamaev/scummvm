@@ -14,19 +14,32 @@ uniform float depthNear;
 uniform float depthFar;
 uniform float depthMode;     // 0 = packed mask, 1 = GL window depth
 
+// Viewport UV -> background-mask UV: V-flip (the mask is top-origin, the copied
+// scene/depth are bottom-origin) plus the scroll remap - in scrolling locations the
+// background is drawn wider than the viewport at a scrolled offset, so without this
+// the mask is sampled from the wrong place and slides as the camera scrolls.
+// Identity (1,1)/(0,0) for an ordinary full-screen background.
+uniform vec2 maskScale;
+uniform vec2 maskOffset;
+
+vec2 maskUv(vec2 uv) {
+	return vec2(uv.x, 1.0 - uv.y) * maskScale + maskOffset;
+}
+
 float sceneDepth(vec2 uv) {
 	if (depthMode > 0.5) {
 		float w = texture(depthTex, uv).r;
 		float ndc = w * 2.0 - 1.0;
 		return (2.0 * depthNear * depthFar) / (depthFar + depthNear - ndc * (depthFar - depthNear));
 	}
-	vec4 d = texture(depthTex, uv);
+	// depthTex IS the mask in this mode, so it needs the same remap as bgDepth.
+	vec4 d = texture(depthTex, maskUv(uv));
 	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
 	return mix(depthZMin, depthZMax, norm);
 }
 
 float bgDepth(vec2 uv) {
-	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y));
+	vec4 d = texture(bgDepthTex, maskUv(uv));
 	float norm = (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
 	return mix(depthZMin, depthZMax, norm);
 }
