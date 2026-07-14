@@ -47,8 +47,16 @@ uniform float bgDebug;   // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light-space U
 uniform vec3 actorWorld; // April's feet in world space, for the spatial falloff
 uniform float shadowReach; // max horizontal shadow extent (world units)
 
+// Viewport UV -> mask UV. In scrolling locations the background is drawn wider
+// than the viewport at a scrolled offset, so plain viewport UV reads the wrong
+// part of the mask and the error slides with the scroll. Identity (1,1)/(0,0) for
+// an ordinary full-screen background.
+uniform vec2 maskScale;
+uniform vec2 maskOffset;
+
 float decodeMask(vec2 uv) {
-	vec4 d = texture(bgDepthTex, vec2(uv.x, 1.0 - uv.y)); // mask is top-origin
+	vec2 muv = vec2(uv.x, 1.0 - uv.y) * maskScale + maskOffset; // mask is top-origin
+	vec4 d = texture(bgDepthTex, muv);
 	return (d.r * 255.0 * 256.0 + d.g * 255.0) / 65535.0;
 }
 

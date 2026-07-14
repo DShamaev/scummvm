@@ -586,6 +586,9 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform("bgDepthTex", 1);
 	_shadowBgShader->setUniform1f("zMin", _gfx->getWorldDepthZMin());
 	_shadowBgShader->setUniform1f("zMax", _gfx->getWorldDepthZMax());
+	// Scroll-correct mask sampling (background drawn wider than the viewport).
+	_shadowBgShader->setUniform("maskScale", _gfx->getWorldDepthUvScale());
+	_shadowBgShader->setUniform("maskOffset", _gfx->getWorldDepthUvOffset());
 	_shadowBgShader->setUniform("projScale", Math::Vector2d(projSX, projSY));
 	_shadowBgShader->setUniform("invView", invView);
 	_shadowBgShader->setUniform("lightVP0", lightVP0);

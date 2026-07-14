@@ -272,6 +272,8 @@ void OpenGLSDriver::clearScreen() {
 	// it so a location without a depth map doesn't reuse the previous one.
 	_worldDepthBitmap = nullptr;
 	_worldDepthArea = 0;
+	_worldDepthUvScale = Math::Vector2d(1.0f, 1.0f);
+	_worldDepthUvOffset = Math::Vector2d(0.0f, 0.0f);
 
 	// Publish the previous frame's sprite-stamp diagnostics, then reset for this
 	// frame's stamp pass (which runs later, during the game window render).
@@ -454,7 +456,8 @@ void OpenGLSDriver::buildDoF(int vw, int vh, int iterations) {
 	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
 }
 
-void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, int area) {
+void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, int area,
+                                  const Math::Vector2d &uvScale, const Math::Vector2d &uvOffset) {
 	// Several surfaces per frame have depth maps (the full-screen location
 	// background AND small overlay props). The post pass wants the BACKGROUND's
 	// depth, so keep the largest-area surface, not the last one drawn - otherwise
@@ -467,6 +470,8 @@ void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, i
 	_worldDepthBitmap = depth;
 	_worldDepthZMin = zMin;
 	_worldDepthZMax = zMax;
+	_worldDepthUvScale = uvScale;
+	_worldDepthUvOffset = uvOffset;
 }
 
 void OpenGLSDriver::bindWorldDepth() const {

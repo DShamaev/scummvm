@@ -106,7 +106,22 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		// (a normal texture) instead of copying the GL depth buffer. Pass the
 		// on-screen area so the driver keeps the largest (full-screen background)
 		// rather than a small overlay prop's depth map.
-		_gfx->setWorldDepth(_depthBitmap, _depthZMin, _depthZMax, (int)width * (int)height);
+		//
+		// Also pass how to map a viewport UV onto this mask. In scrolling locations
+		// the background is drawn WIDER than the viewport at a scrolled offset, so
+		// sampling the mask at plain viewport UV reads the wrong part of it - and the
+		// error slides as the camera scrolls. The surface occupies [o, o+s] of the
+		// viewport in normalised top-origin coords, so maskUv = (p - o) / s.
+		Math::Vector2d o = offsetVertex(dest);
+		Math::Vector2d s = _noScalingOverride
+				? normalizeCurrentCoordinates(width, height)
+				: normalizeOriginalCoordinates(width, height);
+		float sx = ABS(s.getX()) > 0.0001f ? s.getX() : 1.0f;
+		float sy = ABS(s.getY()) > 0.0001f ? s.getY() : 1.0f;
+		Math::Vector2d uvScale(1.0f / sx, 1.0f / sy);
+		Math::Vector2d uvOffset(-o.getX() / sx, -o.getY() / sy);
+		_gfx->setWorldDepth(_depthBitmap, _depthZMin, _depthZMax, (int)width * (int)height,
+		                    uvScale, uvOffset);
 
 		glActiveTexture(GL_TEXTURE1);
 		_depthBitmap->bind();

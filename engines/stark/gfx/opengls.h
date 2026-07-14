@@ -31,6 +31,7 @@
 #include "graphics/opengl/system_headers.h"
 
 #include "math/matrix4.h"
+#include "math/vector2d.h"
 
 namespace OpenGL {
 class Shader;
@@ -133,7 +134,14 @@ public:
 	 * it for SSAO / depth-of-field - avoiding a GL depth-buffer copy, which
 	 * hangs on Apple's GL-over-Metal stack.
 	 */
-	void setWorldDepth(const Bitmap *depth, float zMin, float zMax, int area);
+	void setWorldDepth(const Bitmap *depth, float zMin, float zMax, int area,
+			const Math::Vector2d &uvScale, const Math::Vector2d &uvOffset);
+	/** How to map a viewport UV to this mask's UV. In scrolling locations the
+	 *  background is drawn wider than the viewport at a scrolled offset, so sampling
+	 *  the mask at plain viewport UV reads the wrong part of it - and the error
+	 *  moves with the scroll. maskUv = vec2(u, 1-v) * scale + offset. */
+	Math::Vector2d getWorldDepthUvScale() const { return _worldDepthUvScale; }
+	Math::Vector2d getWorldDepthUvOffset() const { return _worldDepthUvOffset; }
 
 	void getPostDepthState(bool &glDepthCopy, bool &worldMask, bool &contactMode) const override;
 
@@ -206,6 +214,10 @@ private:
 	float _worldDepthZMin;
 	float _worldDepthZMax;
 	int _worldDepthArea;   // on-screen area of the registered depth surface (keep the largest = the background)
+	// Viewport-UV -> mask-UV mapping, so scrolled backgrounds (drawn wider than the
+	// viewport at an offset) are sampled at the right place.
+	Math::Vector2d _worldDepthUvScale;
+	Math::Vector2d _worldDepthUvOffset;
 	// Optional GL depth-buffer copy (real depth, includes the character), used
 	// when 'enable_depth_copy' is on and the stack accepts it.
 	GLuint _postDepthCopyTex;
