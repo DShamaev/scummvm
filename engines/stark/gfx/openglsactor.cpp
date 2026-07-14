@@ -506,6 +506,19 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	// framebuffer is bound and the viewport is the game region.
 	GLuint sceneDepthTex = _gfx->captureViewportDepth();
 
+	// One-shot diagnostic (setInt shadow_bg_log 1): did the depth copy succeed, is
+	// the real-depth path actually active, and what depth range are we working in?
+	// An extreme near/far ratio would wreck depth precision at floor distance.
+	if (ConfMan.hasKey("shadow_bg_log") && ConfMan.getInt("shadow_bg_log") > 0) {
+		warning("Stark shadow-bg: depthTex=%u useRealDepth=%d depthCopyEnabled=%d | "
+		        "near=%.2f far=%.2f | maskZ=[%.1f..%.1f]",
+		        (unsigned)sceneDepthTex, sceneDepthTex != 0 ? 1 : 0,
+		        ConfMan.getBool("enable_depth_copy") ? 1 : 0,
+		        StarkScene->getNearClipPlane(), StarkScene->getFarClipPlane(),
+		        _gfx->getWorldDepthZMin(), _gfx->getWorldDepthZMax());
+		ConfMan.setInt("shadow_bg_log", 0);
+	}
+
 	// Fullscreen NDC quad + UV.
 	if (!_shadowBgVBO) {
 		static const float quad[16] = {
@@ -534,6 +547,10 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	invViewProj.inverse();
 	invViewProj.transpose();
 
+	// Diagnostics: world -> clip, to re-project the reconstruction back to screen.
+	Math::Matrix4 viewProj = StarkScene->getProjectionMatrix() * StarkScene->getViewMatrix();
+	viewProj.transpose();
+
 	Math::Matrix4 lightVP0 = _gfx->getShadowLightViewProj(0);
 	lightVP0.transpose();
 	Math::Matrix4 lightVP1 = _gfx->getShadowLightViewProj(1);
@@ -542,7 +559,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 
 	// First cut: no scene depth-test yet (validate the reconstruction first; the
 	// character may briefly self-shadow until occlusion is added).
-	int bgDebug = CLIP(ConfMan.hasKey("shadow_bg_debug") ? (int)ConfMan.getInt("shadow_bg_debug") : 0, 0, 4);
+	int bgDebug = CLIP(ConfMan.hasKey("shadow_bg_debug") ? (int)ConfMan.getInt("shadow_bg_debug") : 0, 0, 7);
 
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
@@ -586,6 +603,10 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform("sceneDepthTex", 2);
 	_shadowBgShader->setUniform("invViewProj", invViewProj);
 	_shadowBgShader->setUniform1f("useRealDepth", sceneDepthTex != 0 ? 1.0f : 0.0f);
+	// Diagnostics (debug views 6 and 7).
+	_shadowBgShader->setUniform("viewProj", viewProj);
+	_shadowBgShader->setUniform1f("nearClip", StarkScene->getNearClipPlane());
+	_shadowBgShader->setUniform1f("farClip", StarkScene->getFarClipPlane());
 
 	glActiveTexture(GL_TEXTURE3);
 	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(1));

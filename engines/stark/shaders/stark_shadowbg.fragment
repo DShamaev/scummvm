@@ -21,6 +21,13 @@ uniform sampler2D sceneDepthTex;
 uniform mat4 invViewProj;   // clip space -> world space
 uniform float useRealDepth;
 
+// Diagnostics only: viewProj (world -> clip) re-projects the reconstructed world
+// back to screen; if invViewProj is correct the result must land back on vUV.
+// nearClip/farClip linearize the raw depth so it can be eyeballed against the mask.
+uniform mat4 viewProj;
+uniform float nearClip;
+uniform float farClip;
+
 // Up to two shadow-casting lights, union-blended by weight (nearby lamps
 // cross-fade instead of the dominant light hard-switching).
 uniform sampler2D shadowTex0; // depth-in-colour shadow map (light 0)
@@ -115,8 +122,12 @@ void main() {
 	}
 
 	// Diagnostic visualizations (opaque, fill the whole screen):
-	//   1 = mask depth (grey), 2 = reconstructed eye x/y, 3 = world x/y, 4 = the
-	//   light-space UV the pixel maps to (light 0; should be smooth around April).
+	//   1 = mask depth (grey), 2 = reconstructed eye x/y (mask path), 3 = world xyz,
+	//   4 = light-space UV (light 0), 6 = the REAL depth linearized and normalized
+	//   into the mask's range (compare against 1 - if 6 is flat/garbage the depth
+	//   copy or its sampling is broken), 7 = REPROJECTION ERROR: reconstruct world
+	//   then project it back to screen; correct unprojection => black. Any strong
+	//   red/green means invViewProj is wrong.
 	if (bgDebug > 0.5) {
 		if (bgDebug < 1.5) {
 			outColor = vec4(vec3(norm), 1.0);
@@ -124,10 +135,19 @@ void main() {
 			outColor = vec4(fract(eyePos.x * 0.01), fract(eyePos.y * 0.01), 0.0, 1.0);
 		} else if (bgDebug < 3.5) {
 			outColor = vec4(fract(world.x * 0.001), fract(world.y * 0.001), fract(world.z * 0.001), 1.0);
-		} else {
+		} else if (bgDebug < 4.5) {
 			vec4 lc0 = lightVP0 * world;
 			vec2 suv0 = (lc0.xy / lc0.w) * 0.5 + 0.5;
 			outColor = vec4(clamp(suv0, 0.0, 1.0), 0.0, 1.0);
+		} else if (bgDebug < 6.5) {
+			float dd = texture(sceneDepthTex, vUV).r;
+			float nz = dd * 2.0 - 1.0;
+			float ez = (2.0 * nearClip * farClip) / (farClip + nearClip - nz * (farClip - nearClip));
+			outColor = vec4(vec3(clamp((ez - zMin) / max(zMax - zMin, 0.001), 0.0, 1.0)), 1.0);
+		} else {
+			vec4 reclip = viewProj * world;
+			vec2 reuv = (reclip.xy / reclip.w) * 0.5 + 0.5;
+			outColor = vec4(abs(reuv - vUV) * 50.0, 0.0, 1.0);
 		}
 		return;
 	}

@@ -125,7 +125,11 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// preference toggle - turn off if the hardening detaches the shadow from the feet.
 	ConfMan.registerDefault("shadow_contact_harden", true);
 	ConfMan.registerDefault("shadow_wall", false);       // drape over walls/furniture (opt-in; needs an accurate depth map)
-	ConfMan.registerDefault("shadow_bg_debug", 0);       // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light UV
+	// 0 off; 1 mask; 2 eye.xy; 3 world.xyz; 4 light UV; 6 real depth linearized into
+	// the mask's range (compare with 1); 7 reprojection error (black = the drape's
+	// unprojection is correct, colour = it is wrong).
+	ConfMan.registerDefault("shadow_bg_debug", 0);
+	ConfMan.registerDefault("shadow_bg_log", 0);         // 1 = log one drape state line, then self-resets
 	// Supersampling / SSAA: render the whole frame at NxN and downsample. 100 =
 	// off (native), 200 = 2x. Off by default; it is the heaviest option and a
 	// safe kill switch. Also sharpens the detail magnifier.
