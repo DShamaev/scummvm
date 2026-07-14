@@ -73,6 +73,20 @@ protected:
 	// no depth mask. Returns false if it couldn't run.
 	bool renderShadowBackground(const Math::Vector3d &position);
 
+public:
+	void castPendingShadow() override;
+
+private:
+	// Deferred shadow cast: render() only stencils the actor and records what the
+	// cast needs; the game window calls castPendingShadow() once every item is drawn.
+	// The shadow MAP is rendered there too, not in render(): the driver holds a
+	// single set of shadow textures, so with several actors on screen an early map
+	// render would be overwritten by the next actor before this one ever cast.
+	bool _pendingShadow;
+	Math::Vector3d _pendingShadowPos;
+	Math::Matrix4 _pendingShadowModel;
+	LightEntryArray _pendingLights;
+
 	void clearVertices();
 	void uploadVertices();
 	GLuint createModelVBO(const Model *model);

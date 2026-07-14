@@ -79,6 +79,18 @@ public:
 
 	virtual void render(const Math::Vector3d &position, float direction, const Common::Array<Gfx::LightEntry *> &lights) = 0;
 
+	/**
+	 * Cast this actor's shadow onto the scene, deferred until every scene item has
+	 * been drawn.
+	 *
+	 * It cannot happen during render(): the shadow drape darkens the framebuffer, so
+	 * any prop drawn after the actor (i.e. any prop standing nearer than her) would
+	 * simply repaint over the shadow and erase it. Running last also means the depth
+	 * buffer already holds the whole scene. The actor's own pixels are stencilled
+	 * during her draw and skipped here, so she is not dimmed by her own shadow.
+	 */
+	virtual void castPendingShadow() {}
+
 protected:
 	AnimHandler *_animHandler;
 	Model *_model;

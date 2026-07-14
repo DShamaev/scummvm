@@ -84,6 +84,8 @@ public:
 	 * are therefore drawn after her. Depth-mapped props draw their real per-pixel
 	 * depth colour-masked; the rest stamp their flat floor plane.
 	 */
+	/** Cast this entry's actor shadow, once every scene item has been drawn. */
+	void castShadow();
 	void prepassDepth();
 	void stampDepth();
 

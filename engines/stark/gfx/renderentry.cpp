@@ -121,6 +121,16 @@ float RenderEntry::imageEyeDepth(VisualImageXMG *image) const {
 	return eye > 0.0f ? eye : 0.0f;
 }
 
+void RenderEntry::castShadow() {
+	if (!_visual) {
+		return;
+	}
+	VisualActor *actor = _visual->get<VisualActor>();
+	if (actor) {
+		actor->castPendingShadow();
+	}
+}
+
 void RenderEntry::prepassDepth() {
 	if (!_visual) {
 		return;

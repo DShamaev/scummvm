@@ -88,6 +88,7 @@ OpenGLSActorRenderer::OpenGLSActorRenderer(OpenGLSDriver *gfx) :
 	_shadowRecvVBO = 0;
 	_shadowBgVBO = 0;
 	_shadowDominantIdx = -1;
+	_pendingShadow = false;
 }
 
 OpenGLSActorRenderer::~OpenGLSActorRenderer() {
@@ -135,25 +136,28 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	Math::Matrix4 normalMatrix = modelViewMatrix;
 	normalMatrix.invertAffineOrthonormal();
 
-	// Shadow mapping (Phase 1): render this actor from the light into the shadow
-	// map before the main draw. Self-contained (binds/restores the FBO), so the
-	// main shader setup below is unaffected. No-op when disabled.
-	renderShadowMap(model, position, lights);
-
-	// Cast the shadow onto the scene BEFORE drawing the actor. The wall drape is a
-	// fullscreen pass that reconstructs the depth buffer, so if the actor were
-	// already drawn it would reconstruct HER surface, find her own back faces behind
-	// the shadow map's front faces, and darken her - double-dimming the character on
-	// top of her normal lighting. Casting first means the depth holds only the
-	// background/props, and she then draws opaquely over her own shadow.
+	// The whole shadow cast (map + receive) is DEFERRED until every scene item has
+	// been drawn; the game window calls castPendingShadow(). It can't run here: the
+	// drape darkens the framebuffer, so props drawn after the actor - i.e. every prop
+	// standing nearer than her - would repaint over the shadow and erase it. Running
+	// it before the draw instead dimmed her with her own shadow. Deferring satisfies
+	// both: the depth buffer is complete, and her stencilled pixels are skipped.
 	bool forceShadowsEarly = ConfMan.hasKey("force_shadows") && ConfMan.getBool("force_shadows");
 	bool wantShadow = (_castsShadow || forceShadowsEarly) &&
 	                  (StarkScene->shouldRenderShadows() || forceShadowsEarly) &&
 	                  StarkSettings->getBoolSetting(Settings::kShadow);
-	bool didShadowMap = false;
-	if (wantShadow && ConfMan.getBool("enable_shadow_mapping") && _gfx->isShadowMapValid()) {
-		renderShadowReceive(position);
-		didShadowMap = true;
+	bool didShadowMap = wantShadow && ConfMan.getBool("enable_shadow_mapping");
+	_pendingShadow = didShadowMap;
+	_pendingShadowPos = position;
+	_pendingShadowModel = model;
+	_pendingLights = lights;
+
+	// Stencil this actor's pixels (bit 1) so the deferred drape can skip them.
+	if (didShadowMap) {
+		glEnable(GL_STENCIL_TEST);
+		glStencilFunc(GL_ALWAYS, 1, 0xFF);
+		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+		glStencilMask(0xFF);
 	}
 
 	_shader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
@@ -278,12 +282,17 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 
 	_shader->unbind();
 
+	if (didShadowMap) {
+		glStencilMask(0x00);
+		glDisable(GL_STENCIL_TEST);
+	}
+
 	// Some scenes (e.g. the chapter intro) disable shadows in their data via
 	// castsShadow / shouldRenderShadows. force_shadows overrides both so the
 	// character still casts one - at the risk of artifacts where the scene
 	// wasn't staged with a floor at y=0.
-	// The shadow-map path already cast its shadow BEFORE this draw (so the actor
-	// isn't darkened by her own shadow); only the legacy jittered path runs here.
+	// The shadow-map path defers its cast to castPendingShadow(); only the legacy
+	// jittered path still draws its shadow here.
 	if (wantShadow && !didShadowMap) {
 
 		glEnable(GL_BLEND);
@@ -400,6 +409,33 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 
 		_shadowShader->unbind();
 	}
+}
+
+void OpenGLSActorRenderer::castPendingShadow() {
+	if (!_pendingShadow) {
+		return;
+	}
+	_pendingShadow = false;
+
+	// Build this actor's shadow map now, immediately before its own receive: the
+	// driver keeps one set of shadow textures, so rendering it back in render()
+	// would let the next actor on screen overwrite it before we ever cast.
+	_gfx->set3DMode();
+	renderShadowMap(_pendingShadowModel, _pendingShadowPos, _pendingLights);
+	if (!_gfx->isShadowMapValid()) {
+		return;
+	}
+
+	// Everything is drawn by now, so the depth buffer holds the whole scene and no
+	// prop can repaint over the shadow. Skip the actor's own stencilled pixels so
+	// she isn't dimmed by her own shadow.
+	glEnable(GL_STENCIL_TEST);
+	glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+	glStencilMask(0x00);
+
+	renderShadowReceive(_pendingShadowPos);
+
+	glDisable(GL_STENCIL_TEST);
 }
 
 void OpenGLSActorRenderer::renderShadowMap(const Math::Matrix4 &model, const Math::Vector3d &position,
