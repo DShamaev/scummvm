@@ -213,7 +213,8 @@ private:
 	const Bitmap *_worldDepthBitmap;
 	float _worldDepthZMin;
 	float _worldDepthZMax;
-	int _worldDepthArea;   // on-screen area of the registered depth surface (keep the largest = the background)
+	int _worldDepthArea;    // on-screen area of the registered depth surface (largest = the background)
+	float _worldDepthRange; // its zMax-zMin, to break area ties between parallax layers
 	// Viewport-UV -> mask-UV mapping, so scrolled backgrounds (drawn wider than the
 	// viewport at an offset) are sampled at the right place.
 	Math::Vector2d _worldDepthUvScale;

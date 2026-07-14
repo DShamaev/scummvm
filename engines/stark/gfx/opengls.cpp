@@ -100,6 +100,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_worldDepthZMin(0.0f),
 	_worldDepthZMax(0.0f),
 	_worldDepthArea(0),
+	_worldDepthRange(0.0f),
 	_postDepthCopyTex(0),
 	_shadowSceneDepthTex(0),
 	_postDbgGLDepth(false),
@@ -272,6 +273,7 @@ void OpenGLSDriver::clearScreen() {
 	// it so a location without a depth map doesn't reuse the previous one.
 	_worldDepthBitmap = nullptr;
 	_worldDepthArea = 0;
+	_worldDepthRange = 0.0f;
 	_worldDepthUvScale = Math::Vector2d(1.0f, 1.0f);
 	_worldDepthUvOffset = Math::Vector2d(0.0f, 0.0f);
 
@@ -466,7 +468,13 @@ void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, i
 	// depth, so keep the largest-area surface, not the last one drawn - otherwise
 	// a prop's small depth map overwrites the background's and SSAO/DoF/the shadow
 	// drape sample the wrong depth as the character moves between props.
-	bool accepted = area >= _worldDepthArea;
+	// Scrolling locations have SEVERAL full-size parallax layers, so ties on area are
+	// common - and 'area >= best' let a later mid-ground layer silently overwrite the
+	// real background. Break ties on depth span: the true background's mask covers
+	// the whole scene depth, while a mid-ground layer occupies a narrow band.
+	float range = zMax - zMin;
+	bool accepted = (area > _worldDepthArea) ||
+	                (area == _worldDepthArea && range > _worldDepthRange);
 
 	// Diagnostic (setInt depth_mask_log 1 = one frame; 2 = keep logging): every
 	// depth-mapped surface offering itself as the world depth, and which wins.
@@ -486,6 +494,7 @@ void OpenGLSDriver::setWorldDepth(const Bitmap *depth, float zMin, float zMax, i
 		return;
 	}
 	_worldDepthArea = area;
+	_worldDepthRange = range;
 	_worldDepthBitmap = depth;
 	_worldDepthZMin = zMin;
 	_worldDepthZMax = zMax;
