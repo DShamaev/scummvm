@@ -115,11 +115,11 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// lamps by strength so shadows cross-fade instead of the dominant light hard-
 	// switching as the character moves; 1 is the cheaper single-shadow behaviour.
 	ConfMan.registerDefault("shadow_light_count", 2);
-	// Relative strength (percent of the dominant light) at which a second, differently
-	// aimed light casts a FULL second shadow; below it the second shadow fades in
-	// smoothly (no pop) so two lamps cross-fade as the character moves between them.
-	// Lower it to see second shadows more readily; raise it to suppress them.
-	ConfMan.registerDefault("shadow_second_light_min", 60);
+	// Relative strength (percent of the dominant light) below which a second light's
+	// shadow fades out entirely. Above it the shadow's darkness is PROPORTIONAL to
+	// the light's relative strength, so the nearer/brighter lamp casts the more
+	// pronounced shadow. Raise it to suppress weak second shadows sooner.
+	ConfMan.registerDefault("shadow_second_light_min", 25);
 	// How far a light casts shadows, as a percentage of its lighting falloff. Game
 	// lights have tight falloffs, so at 100 only one lamp is ever in range and the
 	// shadow switches between lamps; reaching further lets two overlap and their

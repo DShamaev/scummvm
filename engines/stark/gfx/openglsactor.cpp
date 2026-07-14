@@ -1108,16 +1108,18 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 		found = kept;
 	}
 
-	// Apply the cast angle (reach) and weight the lights. The dominant is full; a
-	// second light's weight is a smoothstep of its strength relative to the dominant
-	// - fully on once it approaches the dominant (so at the mid-point between two
-	// lamps both shadows are present) and fading to zero as it weakens, with no pop.
-	// shadow_second_light_min sets the relative strength for full second weight.
+	// Apply the cast angle (reach) and weight the lights. The dominant casts a full
+	// shadow; every other light casts one PROPORTIONAL to its strength relative to
+	// the dominant, so the nearer/brighter lamp reads more pronounced and a weaker
+	// one is visibly fainter. (A plain smoothstep here saturated at 1.0 and made
+	// both shadows identical.) The smooth fade is only a cutoff for negligible
+	// lights, so they vanish without popping. Equal lights => equal shadows, which
+	// keeps the hand-off continuous when the dominant flips.
 	float reach = CLIP(ConfMan.hasKey("shadow_length_scale")
 			? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
-	float hiFade = CLIP(ConfMan.hasKey("shadow_second_light_min")
-			? (int)ConfMan.getInt("shadow_second_light_min") : 60, 20, 100) / 100.0f;
-	float loFade = hiFade * 0.25f;
+	float cutoff = CLIP(ConfMan.hasKey("shadow_second_light_min")
+			? (int)ConfMan.getInt("shadow_second_light_min") : 25, 0, 100) / 100.0f;
+	float loFade = cutoff * 0.4f;
 	for (int k = 0; k < found; k++) {
 		Math::Vector3d dir = bestDir[k];
 		Math::Vector2d h(dir.x(), dir.y());
@@ -1137,8 +1139,9 @@ int OpenGLSActorRenderer::computeShadowLights(const LightEntryArray &lights,
 			outWeights[0] = 1.0f;
 		} else {
 			float rel = maxMag > 0.0f ? bestMag[k] / maxMag : 0.0f;
-			float t = CLIP((rel - loFade) / MAX(hiFade - loFade, 0.001f), 0.0f, 1.0f);
-			outWeights[k] = t * t * (3.0f - 2.0f * t);   // smoothstep => no pop
+			float t = CLIP((rel - loFade) / MAX(cutoff - loFade, 0.001f), 0.0f, 1.0f);
+			float fade = t * t * (3.0f - 2.0f * t);   // smooth cutoff, no pop
+			outWeights[k] = rel * fade;               // proportional: weaker light = fainter shadow
 		}
 	}
 
