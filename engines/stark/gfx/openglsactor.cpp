@@ -152,12 +152,16 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	_pendingShadowModel = model;
 	_pendingLights = lights;
 
-	// Stencil this actor's pixels (bit 1) so the deferred drape can skip them.
+	// Stencil this actor's pixels so the deferred drape can skip them. Use a
+	// dedicated high bit and mask writes to it: the stencil buffer is shared with
+	// the legacy jittered shadow path, which set3DMode() configures to COUNT with
+	// GL_INCR and test "== 0" in the low bits. Writing a plain value across the full
+	// mask would corrupt that counter.
 	if (didShadowMap) {
 		glEnable(GL_STENCIL_TEST);
-		glStencilFunc(GL_ALWAYS, 1, 0xFF);
+		glStencilFunc(GL_ALWAYS, kCasterStencilBit, kCasterStencilBit);
 		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-		glStencilMask(0xFF);
+		glStencilMask(kCasterStencilBit);
 	}
 
 	_shader->enableVertexAttribute("position1", _faceVBO, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), 0);
@@ -283,7 +287,10 @@ void OpenGLSActorRenderer::render(const Math::Vector3d &position, float directio
 	_shader->unbind();
 
 	if (didShadowMap) {
-		glStencilMask(0x00);
+		// Restore the default write mask. Leaving it at 0 would silently drop every
+		// later stencil write - including glClear(GL_STENCIL_BUFFER_BIT), which the
+		// legacy jittered path depends on.
+		glStencilMask(0xFF);
 		glDisable(GL_STENCIL_TEST);
 	}
 
@@ -430,11 +437,12 @@ void OpenGLSActorRenderer::castPendingShadow() {
 	// prop can repaint over the shadow. Skip the actor's own stencilled pixels so
 	// she isn't dimmed by her own shadow.
 	glEnable(GL_STENCIL_TEST);
-	glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
-	glStencilMask(0x00);
+	glStencilFunc(GL_NOTEQUAL, kCasterStencilBit, kCasterStencilBit);
+	glStencilMask(0x00);   // test only, never write
 
 	renderShadowReceive(_pendingShadowPos);
 
+	glStencilMask(0xFF);
 	glDisable(GL_STENCIL_TEST);
 }
 

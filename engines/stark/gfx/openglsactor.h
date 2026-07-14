@@ -98,6 +98,11 @@ private:
 	/** Number of jittered passes used to soften the shadow penumbra */
 	static const int kShadowPassCount = 16;
 
+	// Stencil bit marking the shadow caster's own pixels so the deferred drape can
+	// skip them (she must not be dimmed by her own shadow). A dedicated high bit:
+	// the low bits belong to the legacy jittered path's GL_INCR counter.
+	static const GLuint kCasterStencilBit = 0x80;
+
 	Math::Vector3d computeShadowLightDirection(const LightEntryArray &lights, const Math::Vector3d &actorPosition);
 
 	// Select up to 'maxLights' (<= kMaxShadowLights) shadow-casting lights, ordered
