@@ -46,6 +46,7 @@ uniform float contactHarden;  // 1 = grow penumbra with distance; 0 = uniform wi
 uniform float bgDebug;   // 0 off; 1 mask; 2 eye.xy; 3 world.xy; 4 light-space UV
 uniform vec3 actorWorld; // April's feet in world space, for the spatial falloff
 uniform float shadowReach; // max horizontal shadow extent (world units)
+uniform float actorEyeZ; // April's feet eye-space depth, for the depth-aware guards
 
 // Viewport UV -> mask UV. In scrolling locations the background is drawn wider
 // than the viewport at a scrolled offset, so plain viewport UV reads the wrong
@@ -53,6 +54,140 @@ uniform float shadowReach; // max horizontal shadow extent (world units)
 // an ordinary full-screen background.
 uniform vec2 maskScale;
 uniform vec2 maskOffset;
+
+// Shadow blockers: the (up to two) depth-mapped props nearest April. Props
+// are not part of the light-space shadow map, so without this her shadow
+// sails straight through a prop she stands in front of and darkens the floor
+// visible behind it. Each blocker is its viewport rectangle (x, y, w, h in
+// game-viewport pixels, y down) + its colour texture (for the true cutout
+// silhouette) + a depth threshold just beyond its depth slab. For a shadowed
+// fragment, the ACTUAL light ray (the lights are orthographic; the direction
+// falls out of the light view-projection matrix) is marched from the fragment
+// back toward April's body; a sample that projects inside the cutout while
+// lying clearly BEHIND the prop's slab means the prop intercepts her shadow
+// before it reaches this fragment. Marching the true per-light ray keeps the
+// blocking footprint exactly as wide as the prop: shadow that passes beside
+// or above the prop still lands on the ground beyond it. Testing against the
+// prop's own silhouette (not the scene depth buffer) keeps April's own
+// depth-stamped pixels from ever registering as blockers.
+uniform float propCount;
+uniform float propProto;   // version handshake with the C++ side (3 = current)
+uniform vec4 propRect0;
+uniform vec4 propRect1;
+uniform vec2 propZRange0;  // [zMin, zMax] of the prop's depth sidecar
+uniform vec2 propZRange1;
+uniform float propThick0;  // physical thickness behind the visible surface
+uniform float propThick1;
+uniform sampler2D propTex0;
+uniform sampler2D propTex1;
+uniform sampler2D propDepthTex0;   // per-pixel surface depth (16-bit in R/G)
+uniform sampler2D propDepthTex1;
+
+// Does the ray section between eye depths z0 -> z1 (fragment -> April's body,
+// depth is affine along the ray) pass through this prop's matter? The prop's
+// matter at a silhouette pixel starts at that pixel's SURFACE depth (its
+// depth sidecar - the visible front skin) and extends backward by the prop's
+// physical thickness. Rays passing in front of the surface or fully behind
+// the body are NOT blocked - which keeps near-camera framing pieces (whole
+// scene "behind" them) and props April has walked past from eating her
+// shadow. A bounding depth-band crossing is solved analytically so all
+// samples are spent where blocking is possible; sampling starts a step away
+// from the fragment so a prop's own face never self-blocks.
+float propPass(vec3 w0, vec3 w1, float z0, float z1, vec4 rect, vec2 zRange,
+               float thick, sampler2D tex, sampler2D dtex) {
+	// Self-exclusion: a prop cannot block a fragment that IS its own surface.
+	// (Checked at the fragment's own pixel; anything else would erase the
+	// shadow draping onto the prop's face.) NOTE: this must NOT be a distance
+	// guard along the ray - lights travelling across the screen produce
+	// depth-flat rays, and a depth-based guard wiped the whole window.
+	vec4 ownClip = viewProj * vec4(w0, 1.0);
+	if (ownClip.w > 0.0) {
+		vec2 ondc = ownClip.xy / ownClip.w;
+		vec2 opx = vec2((ondc.x + 1.0) * 320.0, (1.0 - ondc.y) * 182.5);
+		vec2 oloc = (opx - rect.xy) / rect.zw;
+		if (oloc.x >= 0.0 && oloc.x <= 1.0 && oloc.y >= 0.0 && oloc.y <= 1.0
+				&& texture(tex, oloc).a >= 0.4) {
+			vec4 ods = texture(dtex, oloc);
+			float osurf = mix(zRange.x, zRange.y,
+			                  (ods.r * 255.0 * 256.0 + ods.g * 255.0) / 65535.0);
+			if (abs(z0 - osurf) < 25.0) {
+				return 0.0;
+			}
+		}
+	}
+	float dz = z1 - z0;
+	float adz = abs(dz);
+	float lo = zRange.x - 12.0;
+	float hi = zRange.y + thick;
+	float t0;
+	float t1;
+	if (adz < 1e-3) {
+		// Depth-flat ray: inside the band for its whole length, or never.
+		if (z0 < lo || z0 > hi) {
+			return 0.0;
+		}
+		t0 = 0.02;
+		t1 = 0.98;
+	} else {
+		float ta = (lo - z0) / dz;
+		float tb = (hi - z0) / dz;
+		t0 = max(min(ta, tb), 0.02);
+		t1 = min(max(ta, tb), 0.98);
+	}
+	if (t1 <= t0) {
+		return 0.0;
+	}
+	// Occupancy averaged over the FIRST-HIT..LAST-HIT span of the ray:
+	//  - solid cutout (totem): matter from entry to exit -> span fully
+	//    occupied -> full block. Transparent rect padding before/after the
+	//    blob does NOT dilute (that was a bug: averaging over all in-rect
+	//    samples half-leaked solid props whose rect is mostly padding).
+	//  - lattice cutout (bed frame, railing): holes interleave between the
+	//    bars inside the span -> partial dimming, light filters through.
+	//  - a fixed-position march aliases into stripes on lattices; per-pixel
+	//    jitter dissolves that into the drape's existing dither-noise look.
+	float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+	float sumTerm = 0.0;
+	int iFirst = -1;
+	int iLast = 0;
+	for (int i = 0; i < 12; i++) {
+		float t = mix(t0, t1, (float(i) + jitter) / 12.0);
+		vec4 clip = viewProj * vec4(mix(w0, w1, t), 1.0);
+		if (clip.w <= 0.0) {
+			continue;
+		}
+		// Game-viewport pixel position (y down), the space the rects live in.
+		vec2 ndcp = clip.xy / clip.w;
+		vec2 px = vec2((ndcp.x + 1.0) * 320.0, (1.0 - ndcp.y) * 182.5);
+		vec2 loc = (px - rect.xy) / rect.zw;
+		if (loc.x < 0.0 || loc.x > 1.0 || loc.y < 0.0 || loc.y > 1.0) {
+			continue;
+		}
+		float a = texture(tex, loc).a;
+		if (a < 0.05) {
+			continue;
+		}
+		vec4 ds = texture(dtex, loc);
+		float surfZ = mix(zRange.x, zRange.y,
+		                  (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0);
+		float ez = clip.w;
+		// Feathered occupancy window (hard cutoffs read as speckle).
+		float wIn = smoothstep(surfZ - 20.0, surfZ - 4.0, ez);
+		float wOut = 1.0 - smoothstep(surfZ + thick * 0.85, surfZ + thick * 1.15, ez);
+		float term = a * wIn * wOut;
+		sumTerm += term;
+		if (term > 0.15) {
+			if (iFirst < 0) {
+				iFirst = i;
+			}
+			iLast = i;
+		}
+	}
+	if (iFirst < 0) {
+		return 0.0;
+	}
+	return clamp(sumTerm / float(iLast - iFirst + 1), 0.0, 1.0);
+}
 
 float decodeMask(vec2 uv) {
 	vec2 muv = vec2(uv.x, 1.0 - uv.y) * maskScale + maskOffset; // mask is top-origin
@@ -111,12 +246,47 @@ float shadowFactor(sampler2D tex, mat4 lvp, vec4 world) {
 	return sh / 49.0;
 }
 
+// How much of this light's ray from the fragment back toward April is
+// intercepted by a blocker prop (see propPass above). fragZ is the fragment's
+// reconstructed eye depth; depth is affine along the ray, so the endpoint
+// depths fully describe it.
+float blockedForLight(vec3 fragWorld, float fragZ, mat4 lvp) {
+	if (propCount < 0.5) {
+		return 0.0;
+	}
+	// Ortho light: world-space light axis = depth row of the view-projection.
+	vec3 g = normalize(vec3(lvp[0][2], lvp[1][2], lvp[2][2]));
+	// Orient toward April and get the ray length to her body axis. The ray
+	// through this fragment is exactly fragWorld + g*s (parallel rays).
+	float sA = dot(actorWorld + vec3(0.0, 0.0, 90.0) - fragWorld, g);
+	if (sA < 0.0) {
+		g = -g;
+		sA = -sA;
+	}
+	if (sA < 1.0) {
+		return 0.0;
+	}
+	vec3 endWorld = fragWorld + g * sA;
+	vec4 endClip = viewProj * vec4(endWorld, 1.0);
+	if (endClip.w <= 0.0) {
+		return 0.0;
+	}
+	float blocked = propPass(fragWorld, endWorld, fragZ, endClip.w,
+	                         propRect0, propZRange0, propThick0, propTex0, propDepthTex0);
+	if (propCount > 1.5 && blocked < 0.95) {
+		blocked = max(blocked, propPass(fragWorld, endWorld, fragZ, endClip.w,
+		                                propRect1, propZRange1, propThick1, propTex1, propDepthTex1));
+	}
+	return blocked;
+}
+
 void main() {
 	vec2 ndc = vUV * 2.0 - 1.0;
 	float norm = decodeMask(vUV);            // kept for the mask fallback + debug 1
 
 	vec3 eyePos = vec3(0.0);   // only used by debug view 2 (mask path)
 	vec4 world;
+	float eyeZrec;             // reconstructed eye depth, for the depth-aware guards
 	if (useRealDepth > 0.5) {
 		// The background's GL depth is deliberately pushed AWAY from the camera by
 		// depth_bias (see stark_surface_depth.fragment) so depth-estimation noise
@@ -137,6 +307,7 @@ void main() {
 		float ndcZ = (farClip + nearClip - 2.0 * farClip * nearClip / eyeZ) / (farClip - nearClip);
 		vec4 wh = invViewProj * vec4(ndc, ndcZ, 1.0);
 		world = wh / wh.w;
+		eyeZrec = eyeZ;
 	} else {
 		// Background-mask path: eye z from the calibrated mask, x/y from NDC.
 		float eyeZ = mix(zMin, zMax, norm);
@@ -144,6 +315,7 @@ void main() {
 		eyePos.x = ndc.x * eyeZ / projScale.x;
 		eyePos.y = ndc.y * eyeZ / projScale.y;
 		world = invView * vec4(eyePos, 1.0);
+		eyeZrec = eyeZ;
 	}
 
 	// Diagnostic visualizations (opaque, fill the whole screen):
@@ -153,6 +325,11 @@ void main() {
 	//   copy or its sampling is broken), 7 = REPROJECTION ERROR: reconstruct world
 	//   then project it back to screen; correct unprojection => black. Any strong
 	//   red/green means invViewProj is wrong.
+	//   8 = SHADOW BLOCKERS: red = blocker 0 cutout, blue = blocker 1 cutout,
+	//   green = this pixel's light-0 ray to April is intercepted by a blocker.
+	//   A black screen in view 8 means propCount is 0 (no blockers selected);
+	//   if view 8 renders the NORMAL SCENE instead of an overlay, the running
+	//   shader is a STALE COPY that predates the blocker system.
 	if (bgDebug > 0.5) {
 		if (bgDebug < 1.5) {
 			outColor = vec4(vec3(norm), 1.0);
@@ -169,18 +346,120 @@ void main() {
 			float nz = dd * 2.0 - 1.0;
 			float ez = (2.0 * nearClip * farClip) / (farClip + nearClip - nz * (farClip - nearClip));
 			outColor = vec4(vec3(clamp((ez - zMin) / max(zMax - zMin, 0.001), 0.0, 1.0)), 1.0);
-		} else {
+		} else if (bgDebug < 7.5) {
 			vec4 reclip = viewProj * world;
 			vec2 reuv = (reclip.xy / reclip.w) * 0.5 + 0.5;
 			outColor = vec4(abs(reuv - vUV) * 50.0, 0.0, 1.0);
+		} else if (bgDebug < 8.5) {
+			float a0 = 0.0;
+			float a1 = 0.0;
+			vec2 px = vec2(vUV.x * 640.0, (1.0 - vUV.y) * 365.0);
+			if (propCount > 0.5) {
+				vec2 l0 = (px - propRect0.xy) / propRect0.zw;
+				if (l0.x >= 0.0 && l0.x <= 1.0 && l0.y >= 0.0 && l0.y <= 1.0) {
+					a0 = texture(propTex0, l0).a;
+				}
+			}
+			if (propCount > 1.5) {
+				vec2 l1 = (px - propRect1.xy) / propRect1.zw;
+				if (l1.x >= 0.0 && l1.x <= 1.0 && l1.y >= 0.0 && l1.y <= 1.0) {
+					a1 = texture(propTex1, l1).a;
+				}
+			}
+			float blk = blockedForLight(world.xyz, eyeZrec, lightVP0);
+			outColor = vec4(a0 * 0.8, blk, a1 * 0.8, 1.0);
+			// Version handshake swatch, top-left corner:
+			//   CYAN  = shader v4 + binary v4 (all current)
+			//   WHITE = shader v4 but STALE BINARY (uniforms unset -> no green!)
+			if (vUV.x < 0.03 && vUV.y > 0.96) {
+				outColor = (propProto > 3.5 && propProto < 4.5)
+				         ? vec4(0.0, 1.0, 1.0, 1.0) : vec4(1.0, 1.0, 1.0, 1.0);
+			}
+		} else {
+			// View 9: per-pixel STAGE diagnosis of blocker 0 against light 0.
+			// Colors: dark grey = no blockers; dark red = no ray (sA < 1);
+			// red = empty depth window; yellow = samples never entered the
+			// rect; orange = in rect but alpha below cutoff; purple = alpha ok
+			// but the surface-depth window rejected every sample;
+			// green = BLOCKED (all stages passed).
+			vec3 col = vec3(0.15);
+			if (propCount > 0.5) {
+				vec3 g = normalize(vec3(lightVP0[0][2], lightVP0[1][2], lightVP0[2][2]));
+				float sA = dot(actorWorld + vec3(0.0, 0.0, 90.0) - world.xyz, g);
+				if (sA < 0.0) { g = -g; sA = -sA; }
+				vec3 endW = world.xyz + g * sA;
+				vec4 endClip = viewProj * vec4(endW, 1.0);
+				float z0 = eyeZrec;
+				float z1 = endClip.w;
+				float dz = z1 - z0;
+				float adz = abs(dz);
+				float lo = propZRange0.x - 12.0;
+				float hi = propZRange0.y + propThick0;
+				bool selfProp = false;
+				vec2 opx = vec2(vUV.x * 640.0, (1.0 - vUV.y) * 365.0);
+				vec2 oloc = (opx - propRect0.xy) / propRect0.zw;
+				if (oloc.x >= 0.0 && oloc.x <= 1.0 && oloc.y >= 0.0 && oloc.y <= 1.0
+						&& texture(propTex0, oloc).a >= 0.4) {
+					vec4 ods = texture(propDepthTex0, oloc);
+					float osurf = mix(propZRange0.x, propZRange0.y,
+					                  (ods.r * 255.0 * 256.0 + ods.g * 255.0) / 65535.0);
+					selfProp = abs(z0 - osurf) < 25.0;
+				}
+				float t0; float t1;
+				if (adz < 1e-3) {
+					t0 = 0.02; t1 = (z0 < lo || z0 > hi) ? -1.0 : 0.98;
+				} else {
+					float ta = (lo - z0) / dz;
+					float tb = (hi - z0) / dz;
+					t0 = max(min(ta, tb), 0.02); t1 = min(max(ta, tb), 0.98);
+				}
+				if (sA < 1.0) col = vec3(0.35, 0.0, 0.0);
+				else if (selfProp) col = vec3(1.0, 1.0, 1.0);
+				else if (t1 <= t0) col = vec3(0.8, 0.0, 0.0);
+				else {
+					float hitRect = 0.0; float hitAlpha = 0.0; float hitDepth = 0.0;
+					for (int i = 0; i < 8; i++) {
+						float t = mix(t0, t1, (float(i) + 0.5) / 8.0);
+						vec4 clip = viewProj * vec4(mix(world.xyz, endW, t), 1.0);
+						if (clip.w <= 0.0) continue;
+						vec2 ndcp = clip.xy / clip.w;
+						vec2 spx = vec2((ndcp.x + 1.0) * 320.0, (1.0 - ndcp.y) * 182.5);
+						vec2 loc = (spx - propRect0.xy) / propRect0.zw;
+						if (loc.x < 0.0 || loc.x > 1.0 || loc.y < 0.0 || loc.y > 1.0) continue;
+						hitRect = 1.0;
+						float a = texture(propTex0, loc).a;
+						if (a < 0.4) continue;
+						hitAlpha = 1.0;
+						vec4 ds = texture(propDepthTex0, loc);
+						float surfZ = mix(propZRange0.x, propZRange0.y,
+						                  (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0);
+						if (clip.w > surfZ - 12.0 && clip.w < surfZ + propThick0) { hitDepth = 1.0; break; }
+					}
+					if (hitDepth > 0.5) col = vec3(0.0, 1.0, 0.0);
+					else if (hitAlpha > 0.5) col = vec3(0.6, 0.0, 0.8);
+					else if (hitRect > 0.5) col = vec3(1.0, 0.6, 0.0);
+					else col = vec3(1.0, 1.0, 0.0);
+				}
+			}
+			outColor = vec4(col, 1.0);
 		}
 		return;
 	}
 
 	// Union blend of the (up to two) lights' shadows, weighted by strength.
-	float visible = 1.0 - shadowFactor(shadowTex0, lightVP0, world) * weight0;
+	// Each light's contribution is cut where a blocker prop intercepts that
+	// light's ray to April before it reaches this fragment.
+	float sf0 = shadowFactor(shadowTex0, lightVP0, world);
+	if (sf0 > 0.0) {
+		sf0 *= 1.0 - blockedForLight(world.xyz, eyeZrec, lightVP0);
+	}
+	float visible = 1.0 - sf0 * weight0;
 	if (shadowCount > 1.5) {
-		visible *= 1.0 - shadowFactor(shadowTex1, lightVP1, world) * weight1;
+		float sf1 = shadowFactor(shadowTex1, lightVP1, world);
+		if (sf1 > 0.0) {
+			sf1 *= 1.0 - blockedForLight(world.xyz, eyeZrec, lightVP1);
+		}
+		visible *= 1.0 - sf1 * weight1;
 	}
 	float occ = 1.0 - visible;
 	if (occ <= 0.0) {
@@ -198,6 +477,23 @@ void main() {
 	float horizFade = 1.0 - smoothstep(shadowReach * 1.5, shadowReach * 3.0, horizDist);
 	float vFade = smoothstep(actorWorld.z - 150.0, actorWorld.z - 30.0, world.z);
 	occ *= horizFade * vFade;
+
+	// NOTE on shadows touching props that April hides behind: the shadow map
+	// only contains her, so props never block light. The disembodied-shadow
+	// case (she is fully hidden but her shadow shows on the floor around the
+	// occluder) is handled on the CPU in renderShadowBackground(), which fades
+	// shadowAlpha with caster visibility. When she is visible, shadow falling
+	// onto nearby prop surfaces is left alone: the light-space depth test
+	// already rejects surfaces nearer to the light than the caster.
+
+	// Eye-depth reach: local lights cannot throw a character-sized shadow onto
+	// receivers hundreds of units of eye depth away. horizFade already trims
+	// this in world XY, but under a steep top-down camera (archives shaft) eye
+	// depth maps to world HEIGHT, which neither the xy nor the below-floor
+	// fade sees - entering the location shadowed the far window. Symmetric
+	// falloff with the same reach scale as the horizontal one.
+	float depthDist = abs(eyeZrec - actorEyeZ);
+	occ *= 1.0 - smoothstep(shadowReach * 1.5, shadowReach * 3.0, depthDist);
 
 	if (occ <= 0.0) {
 		discard;

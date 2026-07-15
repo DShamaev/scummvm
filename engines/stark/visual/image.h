@@ -78,6 +78,16 @@ public:
 	/** True if this image carries a per-pixel depth map (already writes depth) */
 	bool hasDepthMap() const { return _depthBitmap != nullptr; }
 
+	/** Eye-space range of the depth map (only valid when hasDepthMap()) */
+	float getDepthZMin() const { return _depthZMin; }
+	float getDepthZMax() const { return _depthZMax; }
+
+	/** The colour bitmap, for passes that need to sample this image directly */
+	Gfx::Bitmap *getBitmap() const { return _bitmap; }
+
+	/** The depth-map bitmap (16-bit eye depth in R/G), when hasDepthMap() */
+	Gfx::Bitmap *getDepthBitmap() const { return _depthBitmap; }
+
 	/**
 	 * Stamp a single constant eye-space depth for this image into the depth
 	 * buffer (no colour), so a floor-positioned sprite without a depth map still
@@ -126,6 +136,8 @@ private:
 	Gfx::SurfaceRenderer *_surfaceRenderer;
 	Gfx::Bitmap *_bitmap;
 	Gfx::Bitmap *_depthBitmap;
+	float _depthZMin;
+	float _depthZMax;
 	Graphics::Surface *_surface;
 	Common::Point _hotspot;
 	uint _originalWidth;

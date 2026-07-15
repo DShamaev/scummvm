@@ -27,13 +27,16 @@
 
 #include "common/config-manager.h"
 #include "math/glmath.h"
+#include "math/vector4d.h"
 #include "engines/stark/scene.h"
 #include "engines/stark/services/global.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/settings.h"
 #include "engines/stark/gfx/color.h"
 #include "engines/stark/gfx/opengls.h"
+#include "engines/stark/gfx/renderentry.h"
 #include "engines/stark/gfx/texture.h"
+#include "engines/stark/visual/image.h"
 
 #if defined(USE_OPENGL_SHADERS)
 
@@ -552,6 +555,69 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 		return false;
 	}
 
+	// Shadow-blocker candidates: the (up to two) depth-mapped props nearest in
+	// eye depth to April, passed to the drape shader (rect + cutout texture +
+	// slab depth). Props are not part of the light-space shadow map, so the
+	// shader marches each light's ray against these silhouettes: her shadow
+	// neither sails through a prop onto the floor behind it, nor is it
+	// suppressed anywhere the rays genuinely clear the prop - including the
+	// shadow peeking past the prop's edge while she herself is hidden.
+	VisualImageXMG *blockerImage[2] = { nullptr, nullptr };
+	Common::Point blockerPos[2];
+	{
+		float blockerDist[2] = { 1e9f, 1e9f };
+		Math::Vector3d feetEye = position;
+		StarkScene->getViewMatrix().transform(&feetEye, true);
+		float feetEyeZ = ABS(feetEye.z());
+
+		Current *current = StarkGlobal->getCurrent();
+		Resources::Location *location = current ? current->getLocation() : nullptr;
+		Gfx::RenderEntryArray entries = location ? location->listRenderEntries() : Gfx::RenderEntryArray();
+		for (uint i = 0; i < entries.size(); i++) {
+			Visual *visual = entries[i]->getVisual();
+			VisualImageXMG *image = visual ? visual->get<VisualImageXMG>() : nullptr;
+			if (!image || !image->hasDepthMap()) {
+				continue;
+			}
+			// Only overlay props can block; the background layer's own depth
+			// map covers the whole screen and must not count.
+			Resources::ItemVisual *owner = entries[i]->getOwner();
+			if (!owner || owner->getSubType() == Resources::Item::kItemBackground) {
+				continue;
+			}
+			// Rank by slab (mid depth) distance to her: only nearby props can
+			// stand between her body and her shadow.
+			float slabMid = 0.5f * (image->getDepthZMin() + image->getDepthZMax());
+			float dist = ABS(slabMid - feetEyeZ);
+			if (dist < 800.0f) {
+				if (dist < blockerDist[0]) {
+					blockerImage[1] = blockerImage[0]; blockerPos[1] = blockerPos[0]; blockerDist[1] = blockerDist[0];
+					blockerImage[0] = image; blockerPos[0] = entries[i]->getPosition(); blockerDist[0] = dist;
+				} else if (dist < blockerDist[1]) {
+					blockerImage[1] = image; blockerPos[1] = entries[i]->getPosition(); blockerDist[1] = dist;
+				}
+			}
+		}
+
+		// One-shot diagnostic (part of setInt shadow_bg_log 1): which props were
+		// selected as shadow blockers, and where April stands in eye depth.
+		// The 'BLOCKERS' tag doubles as a binary-freshness marker.
+		if (ConfMan.hasKey("shadow_bg_log") && ConfMan.getInt("shadow_bg_log") > 0) {
+			for (int b = 0; b < 2; b++) {
+				if (blockerImage[b]) {
+					warning("Stark shadow-bg BLOCKERS proto=v4: #%d rect=(%d,%d %dx%d) slab=[%.1f..%.1f] | aprilEyeZ=%.1f",
+					        b, blockerPos[b].x, blockerPos[b].y,
+					        blockerImage[b]->getWidth(), blockerImage[b]->getHeight(),
+					        blockerImage[b]->getDepthZMin(), blockerImage[b]->getDepthZMax(),
+					        feetEyeZ);
+				}
+			}
+			if (!blockerImage[0]) {
+				warning("Stark shadow-bg BLOCKERS proto=v4: none selected | aprilEyeZ=%.1f", feetEyeZ);
+			}
+		}
+	}
+
 	// Prefer reconstructing from the real depth buffer (includes depth-stamped
 	// props) so shadows land on furniture correctly; fall back to the background
 	// mask if this GL stack rejects the depth copy. Captured now, while the engine
@@ -611,7 +677,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 
 	// First cut: no scene depth-test yet (validate the reconstruction first; the
 	// character may briefly self-shadow until occlusion is added).
-	int bgDebug = CLIP(ConfMan.hasKey("shadow_bg_debug") ? (int)ConfMan.getInt("shadow_bg_debug") : 0, 0, 7);
+	int bgDebug = CLIP(ConfMan.hasKey("shadow_bg_debug") ? (int)ConfMan.getInt("shadow_bg_debug") : 0, 0, 9);
 
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
@@ -654,6 +720,10 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform("actorWorld", position);
 	float reach = CLIP(ConfMan.hasKey("shadow_length_scale") ? (int)ConfMan.getInt("shadow_length_scale") : 200, 50, 1000) / 100.0f;
 	_shadowBgShader->setUniform1f("shadowReach", 150.0f * reach);
+	// April's eye-space depth, for the shader's eye-depth reach falloff.
+	Math::Vector3d actorEye = position;
+	StarkScene->getViewMatrix().transform(&actorEye, true);
+	_shadowBgShader->setUniform1f("actorEyeZ", ABS(actorEye.z()));
 	// Real-depth reconstruction (props included) when the depth copy succeeded.
 	_shadowBgShader->setUniform("sceneDepthTex", 2);
 	_shadowBgShader->setUniform("invViewProj", invViewProj);
@@ -662,6 +732,41 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	_shadowBgShader->setUniform("viewProj", viewProj);
 	_shadowBgShader->setUniform1f("nearClip", StarkScene->getNearClipPlane());
 	_shadowBgShader->setUniform1f("farClip", StarkScene->getFarClipPlane());
+
+	// Shadow blockers: each candidate prop as its viewport rect + cutout
+	// texture + a threshold just beyond its depth slab. The shader marches the
+	// fragment->April sightline against these silhouettes (see the shader).
+	int blockerCount = 0;
+	for (int b = 0; b < 2; b++) {
+		if (!blockerImage[b]) {
+			continue;
+		}
+		const char *suffix = blockerCount == 0 ? "0" : "1";
+		float zMin = blockerImage[b]->getDepthZMin();
+		float zMax = blockerImage[b]->getDepthZMax();
+		_shadowBgShader->setUniform(Common::String::format("propRect%s", suffix),
+				Math::Vector4d(blockerPos[b].x, blockerPos[b].y,
+				               blockerImage[b]->getWidth(), blockerImage[b]->getHeight()));
+		_shadowBgShader->setUniform(Common::String::format("propZRange%s", suffix),
+				Math::Vector2d(zMin, zMax));
+		// Physical thickness behind the visible surface, estimated from the
+		// prop's world-space width (screen width backprojected at its depth).
+		float focalPx = StarkScene->getProjectionMatrix()(0, 0) * Gfx::Driver::kGameViewportWidth / 2.0f;
+		float worldWidth = blockerImage[b]->getWidth() * 0.5f * (zMin + zMax) / MAX(focalPx, 1.0f);
+		_shadowBgShader->setUniform1f(Common::String::format("propThick%s", suffix),
+				CLIP(worldWidth, 30.0f, 250.0f));
+		glActiveTexture(blockerCount == 0 ? GL_TEXTURE4 : GL_TEXTURE5);
+		blockerImage[b]->getBitmap()->bind();
+		glActiveTexture(blockerCount == 0 ? GL_TEXTURE6 : GL_TEXTURE7);
+		blockerImage[b]->getDepthBitmap()->bind();
+		blockerCount++;
+	}
+	_shadowBgShader->setUniform1f("propCount", (float)blockerCount);
+	_shadowBgShader->setUniform1f("propProto", 4.0f);
+	_shadowBgShader->setUniform("propTex0", 4);
+	_shadowBgShader->setUniform("propTex1", 5);
+	_shadowBgShader->setUniform("propDepthTex0", 6);
+	_shadowBgShader->setUniform("propDepthTex1", 7);
 
 	glActiveTexture(GL_TEXTURE3);
 	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(1));
@@ -675,6 +780,12 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 	glBindTexture(GL_TEXTURE_2D, _gfx->getShadowMapTexture(0));
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindTexture(GL_TEXTURE_2D, 0);
+	for (int b = 0; b < blockerCount; b++) {
+		glActiveTexture(b == 0 ? GL_TEXTURE4 : GL_TEXTURE5);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(b == 0 ? GL_TEXTURE6 : GL_TEXTURE7);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
 	glActiveTexture(GL_TEXTURE3);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	if (sceneDepthTex != 0) {

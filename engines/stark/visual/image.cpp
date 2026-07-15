@@ -38,6 +38,8 @@ VisualImageXMG::VisualImageXMG(Gfx::Driver *gfx) :
 		_gfx(gfx),
 		_bitmap(nullptr),
 		_depthBitmap(nullptr),
+		_depthZMin(0.0f),
+		_depthZMax(0.0f),
 		_surface(nullptr),
 		_originalWidth(0),
 		_originalHeight(0) {
@@ -126,6 +128,8 @@ bool VisualImageXMG::loadDepthPNG(Common::SeekableReadStream *stream, float zMin
 	depthSurface->free();
 	delete depthSurface;
 
+	_depthZMin = zMin;
+	_depthZMax = zMax;
 	_surfaceRenderer->setDepthBitmap(_depthBitmap, zMin, zMax, bias);
 
 	return true;

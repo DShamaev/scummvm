@@ -104,6 +104,7 @@ public:
 
 	/** Gets the position */
 	Common::Point getPosition() const { return _position; }
+	Visual *getVisual() const { return _visual; }
 
 	/** Gets the owner-object */
 	Resources::ItemVisual *getOwner() const { return _owner; }
