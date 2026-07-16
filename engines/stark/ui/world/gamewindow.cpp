@@ -211,6 +211,32 @@ void GameWindow::onRender() {
 		(*element)->castShadow();
 	}
 
+	// Background depth POST-stamp. With background_occludes=false the plate draws
+	// colour only and stamps nothing, which is what stops its collapsed monocular
+	// far field from eating the character. But the post pass reads the REAL GL
+	// depth buffer (applyPostProcess -> captureViewportDepth, gated on
+	// enable_depth_copy, default ON) - not the mask texture - so leaving the plate
+	// out of it means SSAO/DoF see the far clip plane everywhere the background
+	// shows. Every prop and actor silhouette then becomes an artificial depth
+	// cliff, and the AO halos that produces are composited over the whole game
+	// screen, the inventory included.
+	//
+	// Stamping it HERE resolves both: every item has already drawn, so LEQUAL only
+	// fills pixels nothing nearer already owns. It cannot reject the character -
+	// she is drawn and her pixels are nearer - but the post pass now sees a
+	// complete depth field. Colour is untouched (renderDepthOnly colour-masks).
+	//
+	// This is what RenderEntry::prepassDepth() was built for; it had never been
+	// called from anywhere.
+	if (!ConfMan.getBool("background_occludes")) {
+		for (element = _renderEntries.begin(); element != _renderEntries.end(); element++) {
+			Resources::ItemVisual *owner = (*element)->getOwner();
+			if (owner && owner->getSubType() == Resources::Item::kItemBackground) {
+				(*element)->prepassDepth();
+			}
+		}
+	}
+
 	// Depth pass: stamp foreground sprites (floor-positioned images without a
 	// per-pixel depth map) into the depth buffer at their camera distance. This
 	// writes depth only - the colour frame is already composited and untouched -

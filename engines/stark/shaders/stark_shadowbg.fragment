@@ -71,7 +71,7 @@ uniform vec2 maskOffset;
 // prop's own silhouette (not the scene depth buffer) keeps April's own
 // depth-stamped pixels from ever registering as blockers.
 uniform float propCount;
-uniform float propProto;   // version handshake with the C++ side (3 = current)
+uniform float propProto;   // version handshake with the C++ side (5 = current)
 uniform vec4 propRect0;
 uniform vec4 propRect1;
 uniform vec2 propZRange0;  // [zMin, zMax] of the prop's depth sidecar
@@ -115,9 +115,22 @@ float propPass(vec3 w0, vec3 w1, float z0, float z1, vec4 rect, vec2 zRange,
 			}
 		}
 	}
+	// Near-side tolerance, PROPORTIONAL to the prop's thickness estimate.
+	// The sidecar's surface depth is not true geometry: it carries the
+	// generation-time near-face bias (the occlusion epsilon) and the depth
+	// model's slab squeeze, both of which scale with the prop. The old fixed
+	// 20-unit feather only worked because the 9% baked bias happened to pull
+	// big props' slabs ~50+ units toward the camera; when the bias dropped to
+	// 2% (the 12/00 occlusion fix), the fishing-place foot's slab moved +45
+	// deeper, the window no longer covered the ray crossings on April's side,
+	// and her shadow leaked through the foot again. Occlusion and blocking
+	// want different epsilons - give the blocker its own, scaled one.
+	// thick=30 (the clamp floor, small props) reproduces the old 20/-4 feather
+	// exactly; the foot (thick 100-250) opens 45-112 units in front.
+	float nearTol = clamp(thick * 0.45, 20.0, 120.0);
 	float dz = z1 - z0;
 	float adz = abs(dz);
-	float lo = zRange.x - 12.0;
+	float lo = zRange.x - nearTol;
 	float hi = zRange.y + thick;
 	float t0;
 	float t1;
@@ -171,8 +184,10 @@ float propPass(vec3 w0, vec3 w1, float z0, float z1, vec4 rect, vec2 zRange,
 		float surfZ = mix(zRange.x, zRange.y,
 		                  (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0);
 		float ez = clip.w;
-		// Feathered occupancy window (hard cutoffs read as speckle).
-		float wIn = smoothstep(surfZ - 20.0, surfZ - 4.0, ez);
+		// Feathered occupancy window (hard cutoffs read as speckle). The near
+		// feather uses nearTol (see above): proportional to the prop, exactly
+		// the old 20/-4 at the small-prop clamp floor.
+		float wIn = smoothstep(surfZ - nearTol, surfZ - nearTol * 0.2, ez);
 		float wOut = 1.0 - smoothstep(surfZ + thick * 0.85, surfZ + thick * 1.15, ez);
 		float term = a * wIn * wOut;
 		sumTerm += term;
@@ -369,10 +384,10 @@ void main() {
 			float blk = blockedForLight(world.xyz, eyeZrec, lightVP0);
 			outColor = vec4(a0 * 0.8, blk, a1 * 0.8, 1.0);
 			// Version handshake swatch, top-left corner:
-			//   CYAN  = shader v4 + binary v4 (all current)
-			//   WHITE = shader v4 but STALE BINARY (uniforms unset -> no green!)
+			//   CYAN  = shader v5 + binary v5 (all current)
+			//   WHITE = shader v5 but STALE BINARY (uniforms unset -> no green!)
 			if (vUV.x < 0.03 && vUV.y > 0.96) {
-				outColor = (propProto > 3.5 && propProto < 4.5)
+				outColor = (propProto > 4.5 && propProto < 5.5)
 				         ? vec4(0.0, 1.0, 1.0, 1.0) : vec4(1.0, 1.0, 1.0, 1.0);
 			}
 		} else {

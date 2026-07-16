@@ -160,6 +160,7 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	ConfMan.registerDefault(_intKey[kSaveLoadPage], 0);
 	ConfMan.registerDefault("replacement_png_premultiply_alpha", false);
 	ConfMan.registerDefault("debug_show_depth", false);
+	ConfMan.registerDefault("screenshot_log", false);   // log which FBO a screenshot capture reads
 	ConfMan.registerDefault("post_debug_view", 0);   // 0=off,1=depth,2=dyn mask,3=bg mask
 	ConfMan.registerDefault("post_debug_log", 0);    // 1 = log one post-pass state line, then self-resets
 	ConfMan.registerDefault("debug_show_normals", false);
@@ -196,6 +197,14 @@ Settings::Settings(Audio::Mixer *mixer, const ADGameDescription *gd) :
 	// Depth occlusion bias: how far the background is pushed back (percent of
 	// the scene depth range) so estimation noise doesn't eat the character.
 	ConfMan.registerDefault("depth_bias", 6);
+	// Should the pre-rendered background plate's depth map reject 3D items?
+	// The original engine painted the background first and behind everything
+	// (Layer3D::listRenderEntries excludes kItemBackground from the sort), so it
+	// never occluded the character - real occluders are separate sorted items.
+	// Its depth map is a monocular estimate with a collapsed far field, so
+	// depth-testing her against it eats her body. Off restores the original
+	// semantics; on is the old (broken) behaviour, kept for A/B comparison.
+	ConfMan.registerDefault("background_occludes", false);
 	ConfMan.registerDefault("ignore_font_settings", true);
 
 	// Use the FunCom logo video to check low-resolution fmv

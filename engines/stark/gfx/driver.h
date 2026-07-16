@@ -122,6 +122,18 @@ public:
 	virtual void resolveSupersample() {}
 
 	/**
+	 * Is the current frame being rendered into the supersampling buffer?
+	 *
+	 * Decides WHERE the post pass runs. Normal frames apply it mid-render,
+	 * right after the game window draws the world and before the in-viewport
+	 * UI windows (inventory, action menu) - so scene-depth effects (SSAO/DoF)
+	 * and the grade never composite over UI pixels. Supersampled frames can't
+	 * do that (the copy coordinates assume the resolved backbuffer), so they
+	 * keep the legacy end-of-frame site; SSAO/DoF are disabled there anyway.
+	 */
+	virtual bool isFrameSupersampled() const { return false; }
+
+	/**
 	 * Screen-space post-processing pass over the CURRENT viewport region: copy
 	 * that region from the back buffer and redraw it through the post shader
 	 * (colour grade, vignette, grain, sharpen, depth-of-field, cursor magnifier).

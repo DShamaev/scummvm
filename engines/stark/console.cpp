@@ -77,6 +77,7 @@ Console::Console() :
 	registerCmd("dumpKnowledge",        WRAP_METHOD(Console, Cmd_DumpKnowledge));
 	registerCmd("dumpLocation",         WRAP_METHOD(Console, Cmd_DumpLocation));
 	registerCmd("dumpSceneData",        WRAP_METHOD(Console, Cmd_DumpSceneData));
+	registerCmd("dumpSortKeys",         WRAP_METHOD(Console, Cmd_DumpSortKeys));
 	registerCmd("depthViz",             WRAP_METHOD(Console, Cmd_DepthViz));
 	registerCmd("toggle",               WRAP_METHOD(Console, Cmd_Toggle));
 	registerCmd("setInt",               WRAP_METHOD(Console, Cmd_SetInt));
@@ -162,6 +163,112 @@ static Common::String sanitizeFileName(const Common::String &in) {
 		out += (Common::isAlnum(c) || c == '-' || c == '.') ? c : '_';
 	}
 	return out;
+}
+
+bool Console::Cmd_DumpSortKeys(int argc, const char **argv) {
+	// Diagnostic for the "April is covered at her spawn / stands where the floor
+	// cannot reach her" bug. Prints, in PAINT ORDER, what every render entry's
+	// sort key actually is and where it came from.
+	//
+	// FloorPositionedItem::getSortKey() returns the distance of the FLOOR FACE the
+	// item stands on - NOT the item's own depth. Items not over a floor face get
+	// _floorFaceIndex == -1 and silently inherit FACE 0's distance, which is
+	// arbitrary. Props read their face index from the game data
+	// (item.cpp:861), actors derive theirs from findFaceContainingPoint()
+	// (item.cpp:789) - two different sources that can disagree.
+	Resources::Location *location = StarkGlobal->getCurrent()
+			? StarkGlobal->getCurrent()->getLocation() : nullptr;
+	if (!location) {
+		debugPrintf("Game levels must be loaded first\n");
+		return true;
+	}
+
+	Resources::Floor *floor = StarkGlobal->getCurrent()->getFloor();
+	debugPrintf("=== floor faces: index -> distanceFromCamera ===\n");
+	if (floor) {
+		debugPrintf("  face 0 (the -1 fallback!) = %.1f\n", floor->getDistanceFromCamera(0));
+		// Floor::getFace() is NOT bounds-checked - it indexes _faces directly.
+		float lo = 1e30f, hi = -1e30f;
+		for (uint32 i = 0; i < floor->getNumFaces(); i++) {
+			float d = floor->getDistanceFromCamera(i);
+			if (d < lo) lo = d;
+			if (d > hi) hi = d;
+		}
+		debugPrintf("  %u faces, distance range = %.1f .. %.1f\n",
+		            (unsigned)floor->getNumFaces(), lo, hi);
+
+		// AUTHORED vs REAL. FloorFace::_distanceFromCamera is read straight out of
+		// the XRC (floorface.cpp:195) - it is authored paint-order data, NOT computed
+		// from the camera. Faces split into two kinds:
+		//
+		//   - real triangles: 3 distinct vertices, April walks on them. These have
+		//     BOTH an authored distance AND real geometry, so they are paired samples
+		//     of the authored -> eye-space mapping.
+		//   - degenerate ([0,0,0], hasVertices()==false): pure sort-key records that
+		//     exist only to give a static prop a paint order. No geometry at all, so
+		//     the authored number is the only depth information that exists for them.
+		//
+		// generate_depth.py builds every prop's depth slab from the authored number
+		// while April is depth-tested at her REAL eye-z. If the two columns below
+		// disagree, that mixture is incoherent and props will eat her.
+		Math::Matrix4 fview = StarkScene->getViewMatrix();
+		debugPrintf("\n=== floor faces: AUTHORED distanceFromCamera vs REAL eye-z ===\n");
+		debugPrintf("%5s %5s %12s %12s %10s   %s\n",
+		            "face", "verts", "authored", "realEyeZ", "error", "kind");
+		for (uint32 i = 0; i < floor->getNumFaces(); i++) {
+			Resources::FloorFace *face = floor->getFace(i);
+			if (!face) {
+				continue;
+			}
+			float authored = face->getDistanceFromCamera();
+			if (!face->hasVertices()) {
+				debugPrintf("%5u %5s %12.1f %12s %10s   sort-key record (no geometry)\n",
+				            (unsigned)i, "-", authored, "-", "-");
+				continue;
+			}
+			Math::Vector3d eye = face->getCenter();
+			fview.transform(&eye, true);
+			float real = -eye.z();
+			debugPrintf("%5u %5d %12.1f %12.1f %10.1f   REAL TRIANGLE %s\n",
+			            (unsigned)i, 3, authored, real, real - (-authored),
+			            face->isEnabled() ? "" : "(disabled)");
+		}
+		debugPrintf("(authored is negative; error = realEyeZ - |authored|. Paste the\n");
+		debugPrintf(" REAL TRIANGLE rows - they calibrate authored -> eye space.)\n");
+	}
+
+	debugPrintf("\n=== render entries, in PAINT ORDER (first = drawn first = behind) ===\n");
+	debugPrintf("%-38s %10s %8s %9s  %s\n", "name", "sortKey", "faceIdx", "faceDist", "note");
+	Gfx::RenderEntryArray entries = location->listRenderEntries();
+	for (uint i = 0; i < entries.size(); i++) {
+		Gfx::RenderEntry *e = entries[i];
+		Resources::ItemVisual *owner = e->getOwner();
+		float sk = e->getSortKey();
+		int32 faceIdx = -2;
+		float faceDist = -1.0f;
+		const char *note = "";
+		if (owner) {
+			Resources::FloorPositionedItem *fp = dynamic_cast<Resources::FloorPositionedItem *>(owner);
+			if (fp) {
+				faceIdx = fp->getFloorFaceIndex();
+				if (faceIdx == -1) {
+					note = "<-- NO FLOOR FACE: sort key is FACE 0's distance (arbitrary!)";
+				} else if (floor) {
+					faceDist = floor->getDistanceFromCamera(faceIdx);
+				}
+			} else {
+				note = "(not floor-positioned)";
+			}
+			if (owner->getSubType() == Resources::Item::kItemBackground) {
+				note = "(background - excluded from sort, painted first)";
+			}
+		}
+		debugPrintf("%-38s %10.1f %8d %9.1f  %s\n",
+		            e->getName().c_str(), sk, faceIdx, faceDist, note);
+	}
+	debugPrintf("\nApril is a ModelItem: her sort key is the distance of the floor face\n");
+	debugPrintf("under her feet. Anything listed AFTER her paints OVER her.\n");
+	return true;
 }
 
 bool Console::Cmd_DumpSceneData(int argc, const char **argv) {
@@ -325,6 +432,45 @@ void Console::dumpCurrentSceneData() {
 		Resources::FloorFace *face = floor->getFace(i);
 		json += Common::String::format("\t\t[%d, %d, %d]%s\n",
 				face->getVertexIndex(0), face->getVertexIndex(1), face->getVertexIndex(2),
+				(i == numFaces - 1) ? "" : ",");
+	}
+	json += "\t],\n";
+
+	// Per-face AUTHORED paint-order data. Kept in a PARALLEL array so the existing
+	// "floorFaces" index-triple schema stays byte-identical - generate_depth.py and
+	// probe_wall_geometry.py both index it as f[0]/f[1]/f[2] and must not break.
+	//
+	// FloorFace::_distanceFromCamera is read straight out of the XRC
+	// (floorface.cpp:195). Despite the name, NOTHING computes it from the camera: it
+	// is the original engine's paint-order hint, and the original engine needed no
+	// more than that because it had no per-pixel depth. It is measurably NOT in this
+	// engine's eye space - in 12/00 face 3 is authored -730.6 while its real centre
+	// sits at eye-z 815.5, nearer than every one of its own vertices.
+	//
+	// Two kinds of face:
+	//   hasVertices()==false -> degenerate [0,0,0] sort-key record. Carries a paint
+	//     order for a static prop and NO geometry. generate_depth.py builds that
+	//     prop's whole depth slab from "authored" alone.
+	//   hasVertices()==true  -> real triangle April walks on. Carries BOTH numbers,
+	//     so these rows are free paired samples calibrating authored -> eye space.
+	//     That mapping is what the degenerate faces need to become metric.
+	json += "\t\"floorFaceData\": [\n";
+	for (uint32 i = 0; i < numFaces; i++) {
+		Resources::FloorFace *face = floor->getFace(i);
+		bool hasVerts = face->hasVertices();
+		float realEyeZ = -1.0f;
+		if (hasVerts) {
+			Math::Vector3d center = face->getCenter();
+			view.transform(&center, true);
+			realEyeZ = -center.z();
+		}
+		json += Common::String::format(
+				"\t\t{\"face\": %d, \"authored\": %f, \"hasVertices\": %s, "
+				"\"enabled\": %s, \"realEyeZ\": %f}%s\n",
+				(int)i, face->getDistanceFromCamera(),
+				hasVerts ? "true" : "false",
+				face->isEnabled() ? "true" : "false",
+				realEyeZ,
 				(i == numFaces - 1) ? "" : ",");
 	}
 	json += "\t]\n}\n";

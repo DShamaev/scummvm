@@ -121,6 +121,44 @@ public:
 	 */
 	void setDepthOnly(bool depthOnly) { _depthOnly = depthOnly; }
 
+	/**
+	 * Allow this draw to participate in the depth system at all (per-pixel
+	 * depth map, flat plane depth, world-depth publication for the post pass).
+	 *
+	 * Default FALSE: depth participation is opt-in, enabled by RenderEntry
+	 * around WORLD draws only. Depth maps are looked up by image filename
+	 * (resources/image.cpp), so an image drawn in the UI can carry one too -
+	 * e.g. an inventory icon that shares its art with a scene overlay. The UI
+	 * calls VisualImageXMG::render() directly, and letting such a draw take
+	 * the depth path is categorically wrong: it depth-TESTS the icon against
+	 * the 3D scene behind the panel (clipping it), depth-WRITES scene-frame
+	 * eye distances in the middle of UI rendering, publishes its mask as a
+	 * world-depth candidate, and clobbers the scene's background depth range.
+	 */
+	void setDepthAllowed(bool allowed) { _depthAllowed = allowed; }
+
+	/**
+	 * Should this surface's depth map REJECT 3D items drawn after it?
+	 *
+	 * False for the pre-rendered background plate. Layer3D::listRenderEntries()
+	 * excludes kItemBackground from the sort and paints it first, unconditionally,
+	 * behind everything - so in the original engine the background could never
+	 * occlude the character, and the art was authored on that guarantee. Anything
+	 * that must occlude her is a separate sorted item (e.g. common room_wallfar,
+	 * prop10_pillarleft). Letting the background's depth map depth-test her is a
+	 * power it never had, and since that depth is a monocular estimate with a
+	 * collapsed far field, it eats her: at the 16/00 far doorway she stands at
+	 * eye 1424 while the estimated wall behind her reads 1247, so everything above
+	 * her boots is rejected. (Her boots survive only because the pixels there are
+	 * the exact rasterised floor.)
+	 *
+	 * When false the surface still draws its colour and still publishes its depth
+	 * mask + range, so the post pass (SSAO/DoF/fog) and the shadow drape are
+	 * unaffected - both sample the mask TEXTURE, not the GL depth buffer, and the
+	 * drape's min(mask, realDepth) simply falls back to the mask.
+	 */
+	void setOccludes(bool occludes) { _occludes = occludes; }
+
 protected:
 	bool _noScalingOverride;
 	float _fadeLevel;
@@ -134,6 +172,8 @@ protected:
 	float _depthBias;
 	float _flatDepth;
 	bool _depthOnly;
+	bool _occludes;
+	bool _depthAllowed;
 };
 
 } // End of namespace Gfx

@@ -57,6 +57,26 @@ void RenderEntry::render(const LightEntryArray &lights) {
 
 	VisualImageXMG *imageXMG = _visual->get<VisualImageXMG>();
 	if (imageXMG) {
+		// The pre-rendered background plate must not depth-reject the character.
+		// Layer3D::listRenderEntries() excludes kItemBackground from the sort and
+		// paints it first, behind everything, so the original engine never let it
+		// occlude her - real occluders are separate sorted items. Its depth map is
+		// a monocular estimate whose far field is collapsed, so depth-testing her
+		// against it eats her (16/00 far doorway: she stands at eye 1424, the
+		// estimated wall behind her reads 1247 -> only her boots survive, and only
+		// because those pixels are the exact rasterised floor). The mask is still
+		// published for the post pass and the shadow drape.
+		bool isBackground = _owner && _owner->getSubType() == Resources::Item::kItemBackground;
+		bool occludes = !isBackground || ConfMan.getBool("background_occludes");
+		imageXMG->setOccludes(occludes);
+
+		// Depth participation is opt-in and WORLD-only: RenderEntry draws are the
+		// world, so enable it for this draw. UI code paths (inventory, action
+		// menu, dialog panel) call VisualImageXMG::render() directly and keep the
+		// plain path - even when their image shares art (and therefore a depth
+		// map sidecar) with a scene overlay.
+		imageXMG->setDepthAllowed(true);
+
 		// Optional per-pixel occlusion for flat foreground sprites: write a plane
 		// depth during the colour render so 3D items are clipped by this sprite.
 		float occ = ConfMan.getBool("enable_sprite_occlusion") ? imageEyeDepth(imageXMG) : 0.0f;
@@ -67,6 +87,9 @@ void RenderEntry::render(const LightEntryArray &lights) {
 		} else {
 			imageXMG->render(_position, true);
 		}
+
+		imageXMG->setDepthAllowed(false);
+		imageXMG->setOccludes(true);
 	}
 
 	VisualActor *actor = _visual->get<VisualActor>();
@@ -142,7 +165,10 @@ void RenderEntry::prepassDepth() {
 
 	if (image->hasDepthMap()) {
 		// Per-pixel depth from the prop's depth map, ahead of the actors.
+		// World draw: enable the (opt-in) depth path around it.
+		image->setDepthAllowed(true);
 		image->renderDepthOnly(_position, true);
+		image->setDepthAllowed(false);
 		return;
 	}
 

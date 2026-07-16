@@ -173,12 +173,22 @@ void StarkEngine::mainLoop() {
 		if (StarkResourceProvider->hasLocationChangeRequest()) {
 			StarkGlobal->setNormalSpeed();
 			StarkResourceProvider->performLocationChange();
-			autosaveOnLocationChange();
 		}
 
 		StarkUserInterface->doQueuedScreenChange();
 
 		updateDisplayScene();
+
+		// Autosave on travel AFTER the new location has rendered its first
+		// frame, not right after performLocationChange(). The autosave has no
+		// stored thumbnail (no pause happened), so saveGameState re-renders the
+		// game screen to capture one - and doing that before the location ever
+		// rendered ran the whole pipeline (shadow map FBO passes included) on a
+		// scene with no initialized frame state, which is how autosave
+		// thumbnails ended up showing the shadow map instead of the scene.
+		// autosaveOnLocationChange() is self-guarded: it fires once per genuine
+		// location change and checks canSaveGameStateCurrently() itself.
+		autosaveOnLocationChange();
 
 		// Swap buffers
 		_frameLimiter->delayBeforeSwap();
@@ -313,10 +323,14 @@ void StarkEngine::updateDisplayScene() {
 	StarkGfx->resolveSupersample();
 
 	// Screen-space post-processing (grade/vignette/grain/sharpen/magnifier).
-	// Run at end of frame, after the render pass is composited - copying the
-	// framebuffer mid-pass stalls Apple's tile GPU. It restricts itself to the
-	// 3D game-viewport region, so the UI border strips are not graded.
-	if (StarkUserInterface->isInGameScreen()) {
+	// Normal frames apply it mid-render instead - GameScreen::render() calls it
+	// right after the game window draws the world, BEFORE the in-viewport UI
+	// windows (inventory, action menu) - so scene-depth effects and the grade
+	// never composite over UI pixels. Only supersampled frames still use this
+	// end-of-frame site: their post pass must run on the resolved backbuffer,
+	// and SSAO/DoF are disabled under supersampling so no depth effect can
+	// leak onto the UI here.
+	if (StarkUserInterface->isInGameScreen() && StarkGfx->isFrameSupersampled()) {
 		StarkGfx->applyPostProcess();
 	}
 }

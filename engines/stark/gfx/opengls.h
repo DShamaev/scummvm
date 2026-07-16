@@ -128,6 +128,8 @@ public:
 	 */
 	void resolveSupersample() override;
 
+	bool isFrameSupersampled() const override { return _frameSupersampled; }
+
 	/**
 	 * Register the current location's background depth-mask texture (a normal
 	 * texture, already loaded for depth occlusion) so the post pass can sample
@@ -176,6 +178,10 @@ private:
 	// sample all of them and blend by weight, so nearby lamps each cast a shadow
 	// that cross-fades instead of the single dominant light hard-switching.
 	GLuint _shadowFbo;
+	// Framebuffer bound when the shadow-map pass began, restored by
+	// renderShadowMapEnd. Dedicated on purpose: restoring through _postDrawFbo
+	// coupled the shadow pass to whatever applyPostProcess last captured.
+	GLint _shadowPrevFbo;
 	GLuint _shadowTex[kMaxShadowLights];
 	GLuint _shadowDepthRBO;
 	int _shadowSize;

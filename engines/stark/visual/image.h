@@ -103,6 +103,19 @@ public:
 	 */
 	void setOcclusionDepth(float eyeDepth);
 
+	/** Should this image's depth map reject 3D items? False for the background
+	 *  plate, which the original engine always painted behind everything.
+	 *  See Gfx::SurfaceRenderer::setOccludes. */
+	void setOccludes(bool occludes);
+
+	/**
+	 * Allow this draw to take the depth path (map / flat plane / world-depth
+	 * publication). Enabled by RenderEntry around WORLD draws only; UI draws
+	 * must stay on the plain path even when the image carries a depth map.
+	 * See SurfaceRenderer::setDepthAllowed.
+	 */
+	void setDepthAllowed(bool allowed);
+
 	/** Render the image stretched to an explicit width and height */
 	void renderScaledToSize(const Common::Point &position, uint width, uint height);
 

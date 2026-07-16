@@ -206,6 +206,14 @@ void VisualImageXMG::setOcclusionDepth(float eyeDepth) {
 	_surfaceRenderer->setFlatDepth(eyeDepth);
 }
 
+void VisualImageXMG::setOccludes(bool occludes) {
+	_surfaceRenderer->setOccludes(occludes);
+}
+
+void VisualImageXMG::setDepthAllowed(bool allowed) {
+	_surfaceRenderer->setDepthAllowed(allowed);
+}
+
 void VisualImageXMG::setFadeLevel(float fadeLevel) {
 	_surfaceRenderer->setFadeLevel(fadeLevel);
 }

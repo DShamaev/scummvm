@@ -35,7 +35,9 @@ SurfaceRenderer::SurfaceRenderer() :
 		_depthZMax(1.0f),
 		_depthBias(-1.0f),
 		_flatDepth(0.0f),
-		_depthOnly(false) {
+		_depthOnly(false),
+		_occludes(true),
+		_depthAllowed(false) {
 }
 
 SurfaceRenderer::~SurfaceRenderer() {

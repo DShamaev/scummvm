@@ -130,6 +130,7 @@ OpenGLSDriver::OpenGLSDriver() :
 	_shadowRecvShader(nullptr),
 	_shadowBgShader(nullptr),
 	_shadowFbo(0),
+	_shadowPrevFbo(0),
 	_shadowDepthRBO(0),
 	_shadowSize(1024),
 	_shadowCount(0),
@@ -1197,6 +1198,20 @@ int OpenGLSDriver::renderShadowMapBegin(int index) {
 		return 0;
 	}
 
+	// Remember the framebuffer to restore afterwards (the backend renders into
+	// its own FBO, not 0). Captured BEFORE any bind below, into a DEDICATED
+	// member. The old code captured into _postDrawFbo AFTER the creation path
+	// had already bound _shadowFbo - so on the FBO-creation frame it captured
+	// the shadow FBO itself, renderShadowMapEnd "restored" the shadow FBO, and
+	// the rest of that render (drape, UI, any glReadPixels screenshot) was
+	// drawn into - and read from - the 1024x1024 shadow map. A white square
+	// with the caster's dark streak in a save thumbnail is this bug. Reusing
+	// _postDrawFbo also coupled the shadow pass to whatever applyPostProcess
+	// last captured, which is only guaranteed valid mid-post-pass.
+	if (index == 0) {
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &_shadowPrevFbo);
+	}
+
 	// Create the shadow FBO once: kMaxShadowLights RGBA colour textures (each a
 	// depth-encoded shadow map for one light) sharing one depth renderbuffer for
 	// the caster's own depth test. The colour attachment is swapped per light.
@@ -1219,19 +1234,12 @@ int OpenGLSDriver::renderShadowMapBegin(int index) {
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _shadowDepthRBO);
 		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 			warning("Stark: shadow-map FBO incomplete, disabling shadow mapping");
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)_shadowPrevFbo);
 			glDeleteFramebuffers(1, &_shadowFbo); _shadowFbo = 0;
 			for (int i = 0; i < kMaxShadowLights; i++) { glDeleteTextures(1, &_shadowTex[i]); _shadowTex[i] = 0; }
 			glDeleteRenderbuffers(1, &_shadowDepthRBO); _shadowDepthRBO = 0;
 			return 0;
 		}
-	}
-
-	// Remember the engine framebuffer to restore afterwards (the backend renders
-	// into its own FBO, not 0 - the lesson from the post pipeline). Only on the
-	// first light; the later ones must restore to the same engine target.
-	if (index == 0) {
-		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &_postDrawFbo);
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, _shadowFbo);
@@ -1255,8 +1263,9 @@ void OpenGLSDriver::renderShadowMapEnd(int index, const Math::Matrix4 &lightView
 		_shadowLightVP[index] = lightViewProj;
 		_shadowWeight[index] = weight;
 	}
-	// Restore the engine framebuffer and the game viewport.
-	glBindFramebuffer(GL_FRAMEBUFFER, _postDrawFbo);
+	// Restore the framebuffer that was bound when the pass began (dedicated
+	// member - see renderShadowMapBegin) and the game viewport.
+	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)_shadowPrevFbo);
 	setViewport(_unscaledViewport);
 }
 
@@ -1312,6 +1321,27 @@ void OpenGLSDriver::debugDrawShadowMap() {
 }
 
 Graphics::Surface *OpenGLSDriver::getViewportScreenshot() const {
+	// Screenshot/thumbnail forensics (setBool screenshot_log true): glReadPixels
+	// reads the CURRENT framebuffer, so if an offscreen pass leaked its binding,
+	// the capture silently reads that buffer instead of the scene. Autosave
+	// thumbnails full of shadow-map content were found this way. This names the
+	// buffer the capture is actually about to read.
+	if (ConfMan.hasKey("screenshot_log") && ConfMan.getBool("screenshot_log")) {
+		GLint cur = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &cur);
+		const char *what = "backend/default";
+		if (cur != 0) {
+			if ((GLuint)cur == _shadowFbo)      what = "SHADOW MAP FBO (leaked!)";
+			else if ((GLuint)cur == _bloomFbo)  what = "BLOOM/AO half-res FBO (leaked!)";
+			else if ((GLuint)cur == _postFBO)   what = "supersample FBO";
+			else if (cur == _postDrawFbo)       what = "engine framebuffer";
+			else                                what = "unknown FBO";
+		}
+		warning("Stark screenshot: reading fbo=%d [%s] viewport=%dx%d at (%d,%d)",
+		        cur, what, _viewport.width(), _viewport.height(),
+		        _viewport.left, g_system->getHeight() - _viewport.bottom);
+	}
+
 	Graphics::Surface *s = new Graphics::Surface();
 	s->create(_viewport.width(), _viewport.height(), getRGBAPixelFormat());
 

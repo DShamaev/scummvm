@@ -605,7 +605,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 		if (ConfMan.hasKey("shadow_bg_log") && ConfMan.getInt("shadow_bg_log") > 0) {
 			for (int b = 0; b < 2; b++) {
 				if (blockerImage[b]) {
-					warning("Stark shadow-bg BLOCKERS proto=v4: #%d rect=(%d,%d %dx%d) slab=[%.1f..%.1f] | aprilEyeZ=%.1f",
+					warning("Stark shadow-bg BLOCKERS proto=v5: #%d rect=(%d,%d %dx%d) slab=[%.1f..%.1f] | aprilEyeZ=%.1f",
 					        b, blockerPos[b].x, blockerPos[b].y,
 					        blockerImage[b]->getWidth(), blockerImage[b]->getHeight(),
 					        blockerImage[b]->getDepthZMin(), blockerImage[b]->getDepthZMax(),
@@ -613,7 +613,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 				}
 			}
 			if (!blockerImage[0]) {
-				warning("Stark shadow-bg BLOCKERS proto=v4: none selected | aprilEyeZ=%.1f", feetEyeZ);
+				warning("Stark shadow-bg BLOCKERS proto=v5: none selected | aprilEyeZ=%.1f", feetEyeZ);
 			}
 		}
 	}
@@ -762,7 +762,7 @@ bool OpenGLSActorRenderer::renderShadowBackground(const Math::Vector3d &position
 		blockerCount++;
 	}
 	_shadowBgShader->setUniform1f("propCount", (float)blockerCount);
-	_shadowBgShader->setUniform1f("propProto", 4.0f);
+	_shadowBgShader->setUniform1f("propProto", 5.0f);
 	_shadowBgShader->setUniform("propTex0", 4);
 	_shadowBgShader->setUniform("propTex1", 5);
 	_shadowBgShader->setUniform("propDepthTex0", 6);

@@ -61,14 +61,18 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	_gfx->start2DMode();
 
 	bool depthMapsOn = StarkSettings->getBoolSetting(Settings::kDepthMaps);
-	bool useDepth = _depthBitmap != nullptr && depthMapsOn;
+	// _depthAllowed: depth participation is opt-in, enabled by RenderEntry around
+	// WORLD draws only. UI draws (inventory, action menu, dialog panel) call
+	// VisualImageXMG::render() directly and must take the plain path even when
+	// their image carries a depth map - see SurfaceRenderer::setDepthAllowed.
+	bool useDepth = _depthBitmap != nullptr && depthMapsOn && _depthAllowed;
 
 	// Depth-only pre-pass: write this surface's depth WITHOUT touching colour, so
 	// props that draw after the character (because they stand nearer than her) are
 	// already in the depth buffer when her shadow drape runs mid-draw. Only
 	// near-opaque pixels stamp, so a soft edge can't depth-reject her behind it.
 	if (_depthOnly) {
-		if (!useDepth && !(_flatDepth > 0.0f && depthMapsOn)) {
+		if (!_occludes || (!useDepth && !(_flatDepth > 0.0f && depthMapsOn && _depthAllowed))) {
 			_gfx->end2DMode();   // nothing to contribute; start2DMode already ran
 			return;
 		}
@@ -78,7 +82,7 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	// sprite (a floor-positioned foreground image) and per-pixel sprite occlusion
 	// is enabled. Draw with the depth shader in flat mode so 3D items are occluded
 	// per-pixel by this sprite's plane instead of by whole-sprite draw order.
-	bool useFlat = !useDepth && _flatDepth > 0.0f && depthMapsOn;
+	bool useFlat = !useDepth && _flatDepth > 0.0f && depthMapsOn && _depthAllowed;
 	OpenGL::Shader *shader = (useDepth || useFlat) ? _shaderDepth : _shader;
 
 	shader->use();
@@ -143,9 +147,18 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		// afterwards are occluded by the closer parts of the surface.
 		// LEQUAL makes overlay props with depth maps only paint over
 		// pixels they are actually in front of (per-pixel prop occlusion).
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(GL_LEQUAL);
-		glDepthMask(GL_TRUE);
+		//
+		// _occludes == false (the background plate) skips this entirely: start2DMode
+		// already left GL_DEPTH_TEST off and glDepthMask(GL_FALSE), which is exactly
+		// the vanilla no-depth-map path, so the colour still draws but nothing is
+		// stamped into the depth buffer and no actor drawn afterwards can be rejected
+		// by it. The uniform setup above has already published the mask + range for
+		// the post pass and the drape. See SurfaceRenderer::setOccludes.
+		if (_occludes) {
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(GL_LEQUAL);
+			glDepthMask(GL_TRUE);
+		}
 	} else if (useFlat) {
 		shader->setUniform("tex", 0);
 		shader->setUniform("depthTex", 1);
@@ -161,9 +174,18 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 		// Write the plane depth (with an alpha discard in the shader) and depth-
 		// test so this sprite occludes / is occluded per-pixel like a depth-mapped
 		// prop, rather than winning or losing wholesale by paint order.
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(GL_LEQUAL);
-		glDepthMask(GL_TRUE);
+		//
+		// _occludes == false (the background plate) skips this entirely: start2DMode
+		// already left GL_DEPTH_TEST off and glDepthMask(GL_FALSE), which is exactly
+		// the vanilla no-depth-map path, so the colour still draws but nothing is
+		// stamped into the depth buffer and no actor can be rejected by it. The
+		// uniform setup above has already published the mask + range for the post
+		// pass and the drape. See SurfaceRenderer::setOccludes.
+		if (_occludes) {
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(GL_LEQUAL);
+			glDepthMask(GL_TRUE);
+		}
 	}
 
 	// Only near-opaque pixels stamp depth during the pre-pass (see alphaCutoff in
@@ -175,7 +197,7 @@ void OpenGLSSurfaceRenderer::render(const Bitmap *bitmap, const Common::Point &d
 	bitmap->bind();
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-	if (useDepth || useFlat) {
+	if ((useDepth || useFlat) && _occludes) {
 		glDepthFunc(GL_LESS);
 		glDepthMask(GL_FALSE);
 		glDisable(GL_DEPTH_TEST);

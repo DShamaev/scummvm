@@ -67,6 +67,7 @@ private:
 	bool Cmd_DumpLevel(int argc, const char **argv);
 	bool Cmd_DumpLocation(int argc, const char **argv);
 	bool Cmd_DumpSceneData(int argc, const char **argv);
+	bool Cmd_DumpSortKeys(int argc, const char **argv);
 	bool Cmd_DepthViz(int argc, const char **argv);
 	bool Cmd_Toggle(int argc, const char **argv);
 	bool Cmd_SetInt(int argc, const char **argv);

@@ -20,6 +20,7 @@
  */
 
 #include "engines/stark/ui/world/gamescreen.h"
+#include "engines/stark/gfx/driver.h"
 #include "engines/stark/services/services.h"
 #include "engines/stark/services/userinterface.h"
 #include "engines/stark/services/global.h"
@@ -81,6 +82,22 @@ void GameScreen::handleGameLoop() {
 void GameScreen::render() {
 	for (int i = _gameScreenWindows.size() - 1; i >= 0; i--) {
 		_gameScreenWindows[i]->render();
+
+		// Apply the screen-space post pass (grade / SSAO / DoF / magnifier) the
+		// moment the WORLD is fully drawn - after the game window, before the
+		// in-viewport UI windows (inventory, action menu) render. The post pass
+		// runs on the composited colour buffer with scene depth: anything drawn
+		// before it gets scene AO and grading painted over it, which is wrong
+		// for UI. The inventory sits inside the game viewport, so the old
+		// end-of-frame site composited SSAO halos over the inventory panel.
+		//
+		// Supersampled frames keep the end-of-frame site in StarkEngine::mainLoop
+		// (the copy coordinates assume the resolved backbuffer); SSAO/DoF are
+		// disabled under supersampling anyway, so nothing depth-driven leaks
+		// onto the UI on that path.
+		if (_gameScreenWindows[i] == _gameWindow && !_gfx->isFrameSupersampled()) {
+			_gfx->applyPostProcess();
+		}
 	}
 }
 
