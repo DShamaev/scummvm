@@ -1036,11 +1036,16 @@ void OpenGLSDriver::applyPostProcess() {
 		// sources are present. Otherwise fall back to plain crease AO.
 		_postShader->setUniform1f("ssaoDynamicOnly", dynamicMask ? 1.0f : 0.0f);
 
-		// Record for the postInfo diagnostic.
-		_postDbgGLDepth  = useGLDepth && _postDepthCopyTex != 0;
-		_postDbgWorldMask = _worldDepthBitmap != nullptr;
-		_postDbgContact  = dynamicMask;
 	}
+
+	// Record for the postInfo diagnostic - OUTSIDE the wantDepth block, so the
+	// report reflects THIS pass even when no depth effect ran. It used to only
+	// update when wantDepth was true, so in a scene whose per-scene SSAO is 0
+	// postInfo showed stale 'no/no' from whenever depth was last wanted - which
+	// read as a depth-pipeline failure and cost a debugging detour.
+	_postDbgGLDepth  = ConfMan.getBool("enable_depth_copy") && _postDepthCopyTex != 0;
+	_postDbgWorldMask = _worldDepthBitmap != nullptr;
+	_postDbgContact  = ssao && _postDbgGLDepth && _postDbgWorldMask;
 
 	// Optional debug view of the depth setup (0 = off). Driven by ConfMan so it
 	// can be toggled live from the console: setInt post_debug_view <0..3>.
